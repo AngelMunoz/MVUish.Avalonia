@@ -45,7 +45,7 @@ public static class ClockModule
         .Padding(20)
         .Child(
            TextBlock()
-                .Text(timeStr.ToBinding(), BindingMode.OneWay)
+                .Text(timeStr)
                 .FontSize(32)
                 .HorizontalAlignment(HorizontalAlignment.Center)
                 .Foreground(Brushes.LimeGreen)

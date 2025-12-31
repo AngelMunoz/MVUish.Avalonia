@@ -99,7 +99,7 @@ public static class MainView
           .Children(
               TextBlock()
                   .Dock(Dock.Top)
-                  .Text(model.Select(m => m.Title).ToBinding(), BindingMode.OneWay)
+                  .Text(model.Select(m => m.Title))
                   .FontSize(24)
                   .HorizontalAlignment(HorizontalAlignment.Center)
                   .Margin(10)
@@ -121,7 +121,7 @@ public static class MainView
                           .Children(
                               Label().Content("Dashboard Settings").Foreground(Brushes.LightGray),
                               TextBox()
-                                  .Text(model.Select(m => m.Title).ToBinding(), BindingMode.OneWay)
+                                  .Text(model.Select(m => m.Title))
                                   .OnText((_, obs) =>
                                       obs.Subscribe(t => dispatch(new Msg.Rename(t)))
                                   )

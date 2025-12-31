@@ -31,7 +31,7 @@ public static class MetricsModule
         Func<Task<Msg>> generator = async () =>
         {
           await Task.Delay(1000); // Simulate work
-          var rnd = new Random();
+          var rnd = Random.Shared;
           return new Msg.NewMetrics(rnd.Next(10, 100), rnd.Next(200, 8000));
         };
 
@@ -66,7 +66,7 @@ public static class MetricsModule
 
     return Border()
         .CornerRadius(10)
-        .BorderBrush(color.ToBinding(), BindingMode.OneWay)
+        .BorderBrush(color)
         .BorderThickness(2)
         .Padding(15)
         .Margin(0, 10, 0, 0)
@@ -75,9 +75,9 @@ public static class MetricsModule
                 .Spacing(5)
                 .Children(
                     TextBlock().Text("System Metrics").FontWeight(FontWeight.Bold).Foreground(Brushes.White),
-                    ProgressBar().Minimum(0).Maximum(100).Value(model.Select(m => (double)m.Cpu).ToBinding(), BindingMode.OneWay).Height(10),
-                    TextBlock().Text(cpuText.ToBinding(), BindingMode.OneWay).FontSize(12),
-                    TextBlock().Text(ramText.ToBinding(), BindingMode.OneWay).FontSize(12)
+                    ProgressBar().Minimum(0).Maximum(100).Value(model.Select(m => (double)m.Cpu)).Height(10),
+                    TextBlock().Text(cpuText).FontSize(12),
+                    TextBlock().Text(ramText).FontSize(12)
                 )
         );
   }
