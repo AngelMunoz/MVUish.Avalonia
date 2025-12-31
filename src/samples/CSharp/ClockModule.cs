@@ -49,7 +49,6 @@ public static class ClockModule
                 .FontSize(32)
                 .HorizontalAlignment(HorizontalAlignment.Center)
                 .Foreground(Brushes.LimeGreen)
-                .FontFamily("Courier New")
         );
   }
 }
