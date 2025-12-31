@@ -1,257 +1,452 @@
-﻿module Avalonia.Mvu
+module Avalonia.Mvu
 
 open System
-open Elmish
+open System.Runtime.CompilerServices
+open System.Threading.Tasks
 open System.Reactive.Subjects
+open System.Reactive.Linq
 open Avalonia
-open Avalonia.Controls
-open Avalonia.Controls.Templates
-open Avalonia.Data
 open Avalonia.Threading
 
+// -----------------------------------------------------------
+// 1. TYPES
+// -----------------------------------------------------------
 
-/// Starts an Elmish loop and provides a Dispatch method that calls the given setModel fn.
-type internal ElmishState<'model, 'msg, 'arg>
-  (mkProgram: unit -> Program<'arg, 'model, 'msg, unit>, arg: 'arg, setModel) =
-  let program = mkProgram()
+/// Dispatch is a function in F# for natural usage.
+type Dispatch<'Msg> = 'Msg -> unit
 
-  let mutable _model = Program.init program arg |> fst
-  let mutable _dispatch = fun (_: 'msg) -> ()
+/// Cmd accepts a Dispatch function.
+type Cmd<'Msg> = Dispatch<'Msg> -> unit
 
-  let setState model dispatch =
-    _dispatch <- dispatch
+type Sub<'Msg> = Dispatch<'Msg> -> IDisposable
 
-    // This shouldn't be an issue as the models are meant to be records which come
-    // with *free equality guarantees* Of course I may be wrong :P
-    if not(obj.ReferenceEquals(model, _model)) then
-      _model <- model
-      setModel model
+/// The Program type that holds the configuration of the MVU app.
+type Program<'Arg, 'Model, 'Msg, 'View> = {
+  Init: 'Arg -> 'Model * Cmd<'Msg>
+  Update: 'Msg -> 'Model -> 'Model * Cmd<'Msg>
+  View: IObservable<'Model> -> Dispatch<'Msg> -> 'View
+  Subscribe: 'Model -> Sub<'Msg>
+  OnError: (string * exn) -> unit
+}
 
-  // Syncs view changes from non-UI threads through the Avalonia dispatcher.
-  let syncDispatch (dispatch: Dispatch<'msg>) (msg: 'msg) =
-    if
-      Dispatcher.UIThread.CheckAccess() // Is this already on the UI thread?
-    then
-      dispatch msg
-    else
-      Dispatcher.UIThread.Post(fun () -> dispatch msg)
+// -----------------------------------------------------------
+// 2. CMD HELPERS
+// -----------------------------------------------------------
 
-  do
-    program
-    |> Program.withSetState setState
-    |> Program.runWithDispatch syncDispatch arg
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module Cmd =
+  let none: Cmd<'Msg> = fun _ -> ()
 
-  member _.Model = _model
-  member _.Dispatch = _dispatch
+  let batch (cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
+    fun dispatch ->
+      for cmd in cmds do
+        cmd dispatch
 
+  let ofMsg (msg: 'Msg) : Cmd<'Msg> = fun dispatch -> dispatch msg
 
-/// C# Heloper module to provide Func/Action based versions of Elmish Cmd modules.
-/// This module won't change the Elmish Cmd module, but instead provides a C#-friendly
-/// also those Cmds that can work relatively nice in C# won't be added here
-module CSharp =
+  let map (mapping: 'A -> 'Msg) (cmd: Cmd<'A>) : Cmd<'Msg> =
+    fun dispatch ->
+      let dispatchA a = dispatch(mapping a)
+      cmd dispatchA
 
-  /// <summary>
-  /// Provides a C#-friendly version of the Elmish Cmd module.
-  /// </summary>
-  module Cmdcs =
-    let inline map (f: Func<'Value, 'Message>, cmd: Cmd<'Value>) =
-      Cmd.map (FuncConvert.FromFunc f) cmd
+  module OfFunc =
+    let perform
+      (f: 'Arg -> 'Result)
+      (arg: 'Arg)
+      (ofSuccess: 'Result -> 'Msg)
+      : Cmd<'Msg> =
+      fun dispatch ->
+        try
+          let result = f arg
+          dispatch(ofSuccess result)
+        with _ ->
+          ()
 
-    module OfFunc =
-      let either
-        (
-          fn: Func<'Arg, 'Return>,
-          arg: 'Arg,
-          ofSuccess: Func<'Return, 'Message>,
-          ofError: Func<exn, 'Message>
-        ) : Cmd<'Message> =
-        let fn = FuncConvert.FromFunc fn
-        let onSuccess = FuncConvert.FromFunc ofSuccess
-        let onError = FuncConvert.FromFunc ofError
-        Cmd.OfFunc.either fn arg onSuccess onError
+    let attempt
+      (f: 'Arg -> unit)
+      (arg: 'Arg)
+      (ofError: exn -> 'Msg)
+      : Cmd<'Msg> =
+      fun dispatch ->
+        try
+          f arg
+        with exn ->
+          dispatch(ofError exn)
 
-      let perform
-        (
-          fn: Func<'Arg, 'Return>,
-          arg: 'Arg,
-          ofSuccess: Func<'Return, 'Message>
-        ) =
-        let fn = FuncConvert.FromFunc fn
-        let onSuccess = FuncConvert.FromFunc ofSuccess
-        Cmd.OfFunc.perform fn arg onSuccess
+  module OfAsync =
+    let perform
+      (f: 'Arg -> Async<'Result>)
+      (arg: 'Arg)
+      (ofSuccess: 'Result -> 'Msg)
+      : Cmd<'Msg> =
+      fun dispatch ->
+        let computation = async {
+          let! result = f arg
+          dispatch(ofSuccess result)
+        }
 
-      let attempt (fn: Action<'Arg>, arg: 'Arg, ofError: Func<exn, 'Message>) =
-        let fn = FuncConvert.FromAction fn
-        let onError = FuncConvert.FromFunc ofError
-        Cmd.OfFunc.attempt fn arg onError
+        Async.StartImmediate computation
 
-    module OfTask =
-      open System.Threading.Tasks
+    let attempt
+      (f: 'Arg -> Async<unit>)
+      (arg: 'Arg)
+      (ofError: exn -> 'Msg)
+      : Cmd<'Msg> =
+      fun dispatch ->
+        let computation = async {
+          try
+            do! f arg
+          with exn ->
+            dispatch(ofError exn)
+        }
 
-      let either
-        (
-          fn: Func<'Arg, Task<'Return>>,
-          arg: 'Arg,
-          ofSuccess: Func<'Return, 'Message>,
-          ofError: Func<exn, 'Message>
-        ) =
-        let fn = FuncConvert.FromFunc fn
-        let onSuccess = FuncConvert.FromFunc ofSuccess
-        let onError = FuncConvert.FromFunc ofError
-        Cmd.OfTask.either fn arg onSuccess onError
+        Async.StartImmediate computation
 
-      let perform
-        (
-          fn: Func<'Arg, Task<'Return>>,
-          arg: 'Arg,
-          ofSuccess: Func<'Return, 'Message>
-        ) =
-        let fn = FuncConvert.FromFunc fn
-        let onSuccess = FuncConvert.FromFunc ofSuccess
-        Cmd.OfTask.perform fn arg onSuccess
+  module OfTask =
+    let perform
+      (f: 'Arg -> Task<'Result>)
+      (arg: 'Arg)
+      (ofSuccess: 'Result -> 'Msg)
+      : Cmd<'Msg> =
+      fun dispatch ->
+        let run () = task {
+          let! result = f arg
+          dispatch(ofSuccess result)
+        }
 
-      let attempt
-        (
-          fn: Func<'Arg, #Task>,
-          arg: 'Arg,
-          ofError: Func<exn, 'Message>
-        ) =
-        let fn = FuncConvert.FromFunc fn
-        let onError = FuncConvert.FromFunc ofError
-        Cmd.OfTask.attempt fn arg onError
+        run() |> ignore
 
-  /// <summary>
-  /// Creates an Elmish loop and returns the model observable and a dispatch function.
-  /// </summary>
-  /// <param name="model">The initial model.</param>
-  /// <param name="update">The update function that takes messages and updates the state accordingly.</param>
-  /// <returns>A tuple containing the model observable and a dispatch function.</returns>
-  let UseElmish
-    (
-      model: 'Model,
-      update: Func<'Msg, 'Model, struct ('Model * Cmd<'Msg>)>
-    ) : ValueTuple<IObservable<'Model>, Action<'Msg>> =
+    let attempt
+      (f: 'Arg -> Task)
+      (arg: 'Arg)
+      (ofError: exn -> 'Msg)
+      : Cmd<'Msg> =
+      fun dispatch ->
+        let run () = task {
+          try
+            do! f arg
+          with exn ->
+            dispatch(ofError exn)
+        }
 
-    let ignoreView = (fun _ _ -> ())
+        run() |> ignore
 
-    let mkProgram () =
-      let init () = model, Cmd.none
+// -----------------------------------------------------------
+// 3. PROGRAM MODULE
+// -----------------------------------------------------------
 
-      let update =
-        let inline update msg model =
-          let struct (model, msg) = update.Invoke(msg, model)
-          (model, msg)
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module Program =
 
-        update
+  let mkProgram
+    (init: 'Arg -> 'Model * Cmd<'Msg>)
+    (update: 'Msg -> 'Model -> 'Model * Cmd<'Msg>)
+    (view: IObservable<'Model> -> Dispatch<'Msg> -> 'View)
+    =
+    {
+      Init = init
+      Update = update
+      View = view
+      Subscribe =
+        fun _ ->
+          (fun _ ->
+            { new IDisposable with
+                member _.Dispose() = ()
+            }
+          )
+      OnError = fun (msg, ex) -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex
+    }
 
-      Program.mkProgram init update ignoreView
+  let mkSimple
+    (init: 'Arg -> 'Model)
+    (update: 'Msg -> 'Model -> 'Model)
+    (view: IObservable<'Model> -> Dispatch<'Msg> -> 'View)
+    =
+    mkProgram
+      (fun arg -> init arg, Cmd.none)
+      (fun msg model -> update msg model, Cmd.none)
+      view
 
-    let _model = new BehaviorSubject<'Model>(model)
+  let withSubscription
+    (subscribe: 'Model -> Sub<'Msg>)
+    (program: Program<'Arg, 'Model, 'Msg, 'View>)
+    =
+    { program with Subscribe = subscribe }
 
-    let state = ElmishState(mkProgram, (), _model.OnNext)
+  let withConsoleTrace (program: Program<'Arg, 'Model, 'Msg, 'View>) =
+    let tracedUpdate msg model =
+      let newModel, cmd = program.Update msg model
+      System.Console.WriteLine($"[Msg] {msg}")
+      System.Console.WriteLine($"[Model] {newModel}")
+      newModel, cmd
 
-    let dispatch map = state.Dispatch map
+    { program with Update = tracedUpdate }
 
-    struct (_model :> IObservable<'Model>, Action<_>(dispatch))
+  let runWith (arg: 'Arg) (program: Program<'Arg, 'Model, 'Msg, 'View>) =
+    let initModel, initCmd = program.Init arg
+    let state = new BehaviorSubject<'Model>(initModel)
 
-  /// <summary>
-  /// Creates an Elmish/MVU loop and returns a ContentControl that renders the view.
-  /// </summary>
-  /// <param name="model">The initial model.</param>
-  /// <param name="update">The update function that takes messages and updates the state accordingly.</param>
-  /// <param name="view">The view function that takes the model and a dispatch function and returns a Control.</param>
-  /// <returns>A ContentControl that renders the view.</returns>
-  [<Experimental("The UseElmish View approach is work in progress and may not be completed at any point in time, do not depend on this code")>]
-  let UseElmishView
-    (
-      model: 'Model,
-      update: Func<'Msg, 'Model, struct ('Model * Cmd<'Msg>)>,
-      view: Func<'Model, Action<'Msg>, Control>
-    ) =
+    let mailbox =
+      MailboxProcessor.Start(fun inbox ->
+        let rec loop () = async {
+          let! msg = inbox.Receive()
 
-    let struct (model, dispatch) = UseElmish(model, update)
+          let op =
+            Dispatcher.UIThread.InvokeAsync(fun () ->
+              try
+                let currentModel = state.Value
+                let newModel, cmd = program.Update msg currentModel
 
-    let content =
-      ContentControl(
-        ContentTemplate =
-          // currently we're just re-rendering the whole thing
-          // which brings problems with focus, textbox view state and similar
-          // ideally if we could replace this FuncDataTemplate with a DataTemplate
-          // that supports recycling to avoid re-rendering the whole thing
-          // it would be ideal, though I don't personally know how to make that possible
-          FuncDataTemplate<'Model>(fun model _ -> view.Invoke(model, dispatch))
+                if not(obj.ReferenceEquals(currentModel, newModel)) then
+                  state.OnNext(newModel)
+
+                cmd(inbox.Post)
+              with exn ->
+                program.OnError("Update loop error", exn)
+            )
+
+          do! op.GetTask() |> Async.AwaitTask
+          return! loop()
+        }
+
+        loop()
       )
 
-    let descriptor =
-      ContentControl.ContentProperty.Bind().WithMode(BindingMode.OneWay)
+    let dispatch = mailbox.Post
 
-    content[descriptor] <- model.ToBinding()
-    content
+    initCmd dispatch
 
-/// <summary>
-/// Creates an Elmish loop and returns the model observable and a dispatch function.
-/// </summary>
-/// <remarks>
-/// This function is meant to be consumed from F# code.
-/// For the C# code please check <see cref="M:Avalonia.Mvu.CSharp.UseElmish">UseElmish</see>.
-/// </remarks>
-/// <param name="model">The initial model.</param>
-/// <param name="update">The update function that takes messages and updates the state accordingly.</param>
-/// <returns>A tuple containing the model observable and a dispatch function.</returns>
-let useElmish
-  (
-    model: 'Model,
-    update: 'Msg -> 'Model -> 'Model * Cmd<'Msg>
-  ) : IObservable<'Model> * Dispatch<'Msg> =
-  let ignoreView = (fun _ _ -> ())
+    try
+      let sub = program.Subscribe initModel
+      sub dispatch |> ignore
+    with ex ->
+      program.OnError("Subscription error", ex)
 
-  let mkProgram () =
-    let init () = model, Cmd.none
+    let view = program.View (state :> IObservable<'Model>) dispatch
+    view
 
-    Program.mkProgram init update ignoreView
+  let run (program: Program<unit, 'Model, 'Msg, 'View>) = runWith () program
 
-  let _model = new BehaviorSubject<'Model>(model)
+// -----------------------------------------------------------
+// 4. EXTENSIONS
+// -----------------------------------------------------------
 
-  let state = ElmishState(mkProgram, (), _model.OnNext)
+[<Extension>]
+module Extensions =
 
-  let dispatch map = state.Dispatch map
+  [<Extension>]
+  let BindStream<'T>
+    (
+      this: AvaloniaObject,
+      property: AvaloniaProperty<'T>,
+      source: IObservable<'T>
+    ) =
+    let binding = source.ToBinding()
+    this[property] <- binding
+    this
 
-  _model :> IObservable<'Model>, dispatch
+// -----------------------------------------------------------
+// 5. C# INTEROP
+// -----------------------------------------------------------
 
-/// <summary>
-/// Creates an Elmish/MVU loop and returns a ContentControl that renders the view.
-/// </summary>
-/// <remarks>
-/// This function is meant to be consumed from F# code.
-/// For the C# code please check <see cref="M:Avalonia.Mvu.CSharp.UseElmishView">UseElmishView</see>.
-/// </remarks>
-/// <param name="model">The initial model.</param>
-/// <param name="update">The update function that takes messages and updates the state accordingly.</param>
-/// <param name="view">The view function that takes the model and a dispatch function and returns a Control.</param>
-/// <returns>A ContentControl that renders the view.</returns>
-[<Experimental("The useElmish View approach is work in progress and may not be completed at any point in time, do not depend on this code")>]
-let useElmishView
-  (
-    model: 'Model,
-    update: 'Msg -> 'Model -> 'Model * Cmd<'Msg>,
-    view: 'Model -> ('Msg -> unit) -> Control
-  ) =
-  let model, dispatch = useElmish(model, update)
+module CSharp =
 
-  let content =
-    ContentControl(
-      ContentTemplate =
-        // currently we're just re-rendering the whole thing
-        // which brings problems with focus, textbox view state and similar
-        // ideally if we could replace this FuncDataTemplate with a DataTemplate
-        // that supports recycling to avoid re-rendering the whole thing
-        // it would be ideal, though I don't personally know how to make that possible
-        FuncDataTemplate<'Model>(fun model _ -> view model dispatch)
-    )
+  // Alias for the F# Program module to avoid shadowing issues
+  module FsProgram = Program
 
-  let descriptor =
-    ContentControl.ContentProperty.Bind().WithMode(BindingMode.OneWay)
+  // Convert Action to F# Func
+  let internal toFs (action: Action<'T>) : ('T -> unit) = action.Invoke
+  // Convert F# Func to Action
+  let internal toAction (f: 'T -> unit) : Action<'T> = Action<'T>(f)
 
-  content[descriptor] <- model.ToBinding()
+  type Command =
+    static member None<'Msg>() : Action<Action<'Msg>> =
+      Action<Action<'Msg>>(fun d -> Cmd.none(toFs d))
 
-  content
+    static member OfMsg<'Msg>(msg: 'Msg) : Action<Action<'Msg>> =
+      Action<Action<'Msg>>(fun d -> Cmd.ofMsg msg (toFs d))
+
+    static member Batch<'Msg>
+      (cmds: seq<Action<Action<'Msg>>>)
+      : Action<Action<'Msg>> =
+      let fsCmds = cmds |> Seq.map(fun c -> (fun d -> c.Invoke(toAction d)))
+      let batch = Cmd.batch fsCmds
+      Action<Action<'Msg>>(fun d -> batch(toFs d))
+
+    static member Perform<'Arg, 'Result, 'Msg>
+      (func: Func<'Arg, 'Result>, arg: 'Arg, ofSuccess: Func<'Result, 'Msg>)
+      =
+      let cmd = Cmd.OfFunc.perform func.Invoke arg ofSuccess.Invoke
+      Action<Action<'Msg>>(fun d -> cmd(toFs d))
+
+    static member PerformTask<'Arg, 'Result, 'Msg>
+      (
+        func: Func<'Arg, Task<'Result>>,
+        arg: 'Arg,
+        ofSuccess: Func<'Result, 'Msg>
+      ) =
+      let cmd = Cmd.OfTask.perform func.Invoke arg ofSuccess.Invoke
+      Action<Action<'Msg>>(fun d -> cmd(toFs d))
+
+  type Subscription =
+    static member FromEvent<'Msg, 'EventArgs>
+      (
+        addHandler: Action<EventHandler<'EventArgs>>,
+        removeHandler: Action<EventHandler<'EventArgs>>,
+        map: Func<'EventArgs, 'Msg>
+      ) : Func<Action<'Msg>, IDisposable> =
+
+      Func<_, _>(fun (dispatch: Action<'Msg>) ->
+        let fsSub =
+          (fun d ->
+            let handler =
+              EventHandler<'EventArgs>(fun _ args -> d(map.Invoke(args)))
+
+            addHandler.Invoke(handler)
+
+            { new IDisposable with
+                member _.Dispose() = removeHandler.Invoke(handler)
+            }
+          )
+
+        fsSub(toFs dispatch)
+      )
+
+    static member Interval<'Msg>
+      (interval: TimeSpan, tick: Func<'Msg>)
+      : Func<Action<'Msg>, IDisposable> =
+      Func<_, _>(fun (dispatch: Action<'Msg>) ->
+        let fsSub =
+          (fun d ->
+            let timer = new System.Timers.Timer(interval.TotalMilliseconds)
+            timer.Elapsed.Add(fun _ -> d(tick.Invoke()))
+            timer.AutoReset <- true
+            timer.Start()
+
+            { new IDisposable with
+                member _.Dispose() =
+                  timer.Stop()
+                  timer.Dispose()
+            }
+          )
+
+        fsSub(toFs dispatch)
+      )
+
+  type ProgramBuilder<'Arg, 'Model, 'Msg, 'View>
+    (
+      init: Func<'Arg, ValueTuple<'Model, Action<Action<'Msg>>>>,
+      update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>>>>,
+      view: Func<IObservable<'Model>, Action<'Msg>, 'View>
+    ) =
+
+    let mutable _subscribe: Func<'Model, Func<Action<'Msg>, IDisposable>> =
+      Func<_, _>(fun _ ->
+        Func<_, _>(fun _ ->
+          { new IDisposable with
+              member _.Dispose() = ()
+          }
+        )
+      )
+
+    let mutable _trace = false
+
+    member this.WithSubscription
+      (sub: Func<'Model, Func<Action<'Msg>, IDisposable>>)
+      =
+      _subscribe <- sub
+      this
+
+    member this.WithConsoleTrace() =
+      _trace <- true
+      this
+
+    member this.RunWith(arg: 'Arg) =
+      let fsInit a =
+        let struct (m, c) = init.Invoke(a)
+        m, (fun d -> c.Invoke(toAction d))
+
+      let fsUpdate m s =
+        let struct (m, c) = update.Invoke(m, s)
+        m, (fun d -> c.Invoke(toAction d))
+
+      let fsView obs d = view.Invoke(obs, toAction d)
+
+      let fsSub m =
+        let cSub = _subscribe.Invoke(m)
+        fun d -> cSub.Invoke(toAction d)
+
+      let mutable prog = FsProgram.mkProgram fsInit fsUpdate fsView
+      prog <- FsProgram.withSubscription fsSub prog
+
+      if _trace then
+        prog <- FsProgram.withConsoleTrace prog
+
+      FsProgram.runWith arg prog
+
+    member this.Run() = this.RunWith(Unchecked.defaultof<'Arg>)
+
+  type ProgramBuilderSimple<'Arg, 'Model, 'Msg, 'View>
+    (
+      init: Func<'Arg, 'Model>,
+      update: Func<'Msg, 'Model, 'Model>,
+      view: Func<IObservable<'Model>, Action<'Msg>, 'View>
+    ) =
+
+    member this.ToFull() =
+      let fullInit arg =
+        struct (init.Invoke(arg), Command.None<'Msg>())
+
+      let fullUpdate msg model =
+        struct (update.Invoke(msg, model), Command.None<'Msg>())
+
+      new ProgramBuilder<_, _, _, _>(
+        Func<_, _>(fullInit),
+        Func<_, _, _>(fullUpdate),
+        view
+      )
+
+    member this.RunWith(arg: 'Arg) = this.ToFull().RunWith(arg)
+
+    member this.Run() = this.ToFull().Run()
+
+
+  type Program =
+    static member MkProgram<'Arg, 'Model, 'Msg, 'View>
+      (
+        init: Func<'Arg, ValueTuple<'Model, Action<Action<'Msg>>>>,
+        update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>>>>,
+        view: Func<IObservable<'Model>, Action<'Msg>, 'View>
+      ) =
+      new ProgramBuilder<_, _, _, _>(init, update, view)
+
+    static member MkProgram<'Model, 'Msg, 'View>
+      (
+        init: Func<ValueTuple<'Model, Action<Action<'Msg>>>>,
+        update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>>>>,
+        view: Func<IObservable<'Model>, Action<'Msg>, 'View>
+      ) =
+      let wrappedInit (_: unit) = init.Invoke()
+      new ProgramBuilder<unit, _, _, _>(Func<_, _>(wrappedInit), update, view)
+
+    static member MkSimple<'Arg, 'Model, 'Msg, 'View>
+      (
+        init: Func<'Arg, 'Model>,
+        update: Func<'Msg, 'Model, 'Model>,
+        view: Func<IObservable<'Model>, Action<'Msg>, 'View>
+      ) =
+      new ProgramBuilderSimple<_, _, _, _>(init, update, view)
+
+    static member MkSimple<'Model, 'Msg, 'View>
+      (
+        init: Func<'Model>,
+        update: Func<'Msg, 'Model, 'Model>,
+        view: Func<IObservable<'Model>, Action<'Msg>, 'View>
+      ) =
+      let wrappedInit (_: unit) = init.Invoke()
+
+      new ProgramBuilderSimple<unit, _, _, _>(
+        Func<_, _>(wrappedInit),
+        update,
+        view
+      )

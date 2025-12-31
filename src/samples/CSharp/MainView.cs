@@ -1,9 +1,5 @@
-using Microsoft.FSharp.Collections;
-using Microsoft.FSharp.Core;
-
 namespace CSharp;
 
-using Elmish;
 using static Avalonia.Mvu.CSharp;
 
 public static class MainView
@@ -23,88 +19,84 @@ public static class MainView
     public sealed record SetName(string Name) : Message;
   }
 
-  /// The only thing I don't like about this are the F# command signatures. but I guess that's the price to pay for
-  /// being able to use MVU in C#. I'm not sure if there's a way to make this more sensible.
-  /// Maybe in .NET8 that has a broader support for Type Aliasing
-  private static (State, FSharpList<FSharpFunc<FSharpFunc<Message, Unit>, Unit>> cmd) UpdateSetname(State state, string name)
+  // Helper method for complex update logic
+  private static (State, Action<Action<Message>>) UpdateSetname(State state, string name)
   {
-    var wasNameFound = (string maybeName) => maybeName.Equals("peter", StringComparison.InvariantCultureIgnoreCase);
+    static bool wasNameFound(string maybeName) => maybeName.Equals("peter", StringComparison.InvariantCultureIgnoreCase);
 
-    Func<bool, Message> onSuccess = nameFound => new Message.NameFound(nameFound);
+    static Message onSuccess(bool nameFound) => new Message.NameFound(nameFound);
 
-    var cmd = Cmdcs.OfFunc.perform(wasNameFound, name, onSuccess);
+    // Use the C# friendly Command helper
+    var cmd = Command.Perform(wasNameFound, name, onSuccess);
 
     return (state with { Name = name }, cmd);
   }
 
   public static Control Build(Window window)
   {
-    var (counter, dispatch) =
-      UseElmish<State, Message>(model: new State(Count: 0), update: (message, state) =>
-      {
-        return message switch
-        {
-          Message.Increment =>
-            (state with { Count = state.Count + 1 }, Cmd.ofMsg<Message>(new Message.SetName("Increment"))),
-          Message.Decrement =>
-            (state with { Count = state.Count - 1 }, Cmd.ofMsg<Message>(new Message.SetName("Decrement"))),
-          Message.Reset =>
-            (state with { Count = 0 }, Cmd.ofMsg<Message>(new Message.SetName("Reset"))),
-          Message.NameFound(var nameFound) =>
-            (state with { NameFound = nameFound }, Cmd.none<Message>()),
-          // for cases that require more than just an expression
-          // you can always fallback to a method within the module
-          Message.SetName({ } name) => UpdateSetname(state, name),
-          _ => (state, Cmd.none<Message>())
-        };
-      });
-
-    var counterText =
-      counter
-        .Select(state => state.Count)
+    // View function is now separate and passed to the Program
+    Control View(IObservable<State> state, Action<Message> dispatch)
+    {
+      var counterText = state
+        .Select(s => s.Count)
         .DistinctUntilChanged()
         .Select(count => $"You clicked {count} times");
 
-    var nameFound =
-      counter
-        .Select(state => state.NameFound)
+      var nameFound = state
+        .Select(s => s.NameFound)
         .DistinctUntilChanged();
 
-    var actionPerformed = counter
-      .Select(state => state.Name)
-      .DistinctUntilChanged()
-      .Select(name => $"Action Performed: {name}");
+      var actionPerformed = state
+        .Select(s => s.Name)
+        .DistinctUntilChanged()
+        .Select(name => $"Action Performed: {name}");
 
-    void IncrementOnClick(Button sender, IObservable<RoutedEventArgs> e) =>
-      e.Subscribe(_ => dispatch(new Message.Increment()));
+      void IncrementOnClick(Button sender, IObservable<RoutedEventArgs> e) =>
+        e.Subscribe(_ => dispatch(new Message.Increment()));
 
-    void CheckText(TextBox sender, IObservable<string> e) =>
-      e
-        .Throttle(TimeSpan.FromMilliseconds(250))
-        .Subscribe(name => dispatch(new Message.SetName(name)));
+      void CheckText(TextBox sender, IObservable<string> e) =>
+        e.Throttle(TimeSpan.FromMilliseconds(250))
+         .Subscribe(name => dispatch(new Message.SetName(name)));
 
-    return StackPanel()
-      .Children(
-        Button().Content("Click me!").OnClick(IncrementOnClick),
-        TextBox().Text(window.BindTitle()),
-        TextBlock().Text(counterText, BindingMode.OneWay),
-        TextBlock().Text(actionPerformed, BindingMode.OneWay),
-        StackPanel()
-          .Spacing(4.0)
-          .Children(
-            Label().Content("Find the name!"),
-            TextBox().Watermark("Starts with P ends with R").OnText(CheckText)
-          ),
-        CheckBox()
-          .IsChecked(nameFound.ToBinding(), BindingMode.OneWay)
-          .IsEnabled(false)
-          .Content("Name Found"),
-        StackPanel()
-          .Margin(new Thickness(10))
-          .Children(
-            Label().Content("Elmish Counter"),
-            CounterModule.Build()
-          )
-      );
+      return StackPanel()
+        .Children(
+          Button().Content("Click me!").OnClick(IncrementOnClick),
+          TextBox().Text(window.BindTitle()),
+          TextBlock().Text(counterText, BindingMode.OneWay),
+          TextBlock().Text(actionPerformed, BindingMode.OneWay),
+          StackPanel()
+            .Spacing(4.0)
+            .Children(
+              Label().Content("Find the name!"),
+              TextBox().Watermark("Starts with P ends with R").OnText(CheckText)
+            ),
+          CheckBox()
+            .IsChecked(nameFound.ToBinding(), BindingMode.OneWay)
+            .IsEnabled(false)
+            .Content("Name Found"),
+          StackPanel()
+            .Margin(new Thickness(10))
+            .Children(
+              Label().Content("Elmish Counter"),
+              CounterModule.Build()
+            )
+        );
+    }
+
+    return Program.MkProgram<State, Message, Control>(
+        init: () => (new State(), Command.None<Message>()),
+        update: (message, state) => message switch
+        {
+          Message.Increment => (state with { Count = state.Count + 1 }, Command.OfMsg<Message>(new Message.SetName("Increment"))),
+          Message.Decrement => (state with { Count = state.Count - 1 }, Command.OfMsg<Message>(new Message.SetName("Decrement"))),
+          Message.Reset => (state with { Count = 0 }, Command.OfMsg<Message>(new Message.SetName("Reset"))),
+          Message.NameFound(var found) => (state with { NameFound = found }, Command.None<Message>()),
+          Message.SetName({ } name) => UpdateSetname(state, name),
+          _ => (state, Command.None<Message>())
+        },
+        view: View
+    )
+    .WithConsoleTrace()
+    .Run();
   }
 }

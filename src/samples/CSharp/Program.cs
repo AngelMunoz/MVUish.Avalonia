@@ -1,4 +1,3 @@
-﻿using Elmish;
 using static Avalonia.Mvu.CSharp;
 using CSharp;
 
@@ -9,11 +8,7 @@ Window View()
     .Title("NXUI + Avalonia.MVU")
     .Width(300)
     .Height(300)
-    .Content(MainView.Build(window))
-#if DEBUG
-    .AttachDevTools()
-#endif
-    ;
+    .Content(MainView.Build(window));
   return window;
 }
 

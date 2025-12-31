@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Avalonia.Mvu/Avalonia.Mvu.fsproj" />
+  </Folder>
+  <Folder Name="/src/samples/">
+    <Project Path="src/samples/CSharp/CSharp.csproj" />
+    <Project Path="src/samples/FSharp/FSharp.fsproj" />
+  </Folder>
+</Solution>
