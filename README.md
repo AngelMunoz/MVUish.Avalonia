@@ -56,9 +56,9 @@ public static class CounterModule
         // Select specific data from the model stream
         var countText = model.Select(m => $"Count: {m.Count}");
 
-        return new StackPanel().Children(
-            new TextBlock().Text(countText.ToBinding(), BindingMode.OneWay),
-            new Button().Content("Increment").OnClick(e =>
+        return StackPanel().Children(
+            TextBlock().Text(countText.ToBinding(), BindingMode.OneWay),
+            Button().Content("Increment").OnClick(e =>
                 e.Subscribe(_ => dispatch(new Msg.Increment()))
             )
         );

@@ -15,8 +15,8 @@ open Avalonia.Threading
 /// Dispatch is a function in F# for natural usage.
 type Dispatch<'Msg> = 'Msg -> unit
 
-/// Cmd accepts a Dispatch function.
-type Cmd<'Msg> = Dispatch<'Msg> -> unit
+/// Cmd accepts a Dispatch function and an Error handler.
+type Cmd<'Msg> = Dispatch<'Msg> -> (string * exn -> unit) -> unit
 
 type Sub<'Msg> = Dispatch<'Msg> -> IDisposable
 
@@ -35,19 +35,19 @@ type Program<'Arg, 'Model, 'Msg, 'View> = {
 
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Cmd =
-  let none: Cmd<'Msg> = fun _ -> ()
+  let none: Cmd<'Msg> = fun _ _ -> ()
 
   let batch (cmds: seq<Cmd<'Msg>>) : Cmd<'Msg> =
-    fun dispatch ->
+    fun dispatch onError ->
       for cmd in cmds do
-        cmd dispatch
+        cmd dispatch onError
 
-  let ofMsg (msg: 'Msg) : Cmd<'Msg> = fun dispatch -> dispatch msg
+  let ofMsg (msg: 'Msg) : Cmd<'Msg> = fun dispatch _ -> dispatch msg
 
   let map (mapping: 'A -> 'Msg) (cmd: Cmd<'A>) : Cmd<'Msg> =
-    fun dispatch ->
+    fun dispatch onError ->
       let dispatchA a = dispatch(mapping a)
-      cmd dispatchA
+      cmd dispatchA onError
 
   module OfFunc =
     let perform
@@ -55,23 +55,24 @@ module Cmd =
       (arg: 'Arg)
       (ofSuccess: 'Result -> 'Msg)
       : Cmd<'Msg> =
-      fun dispatch ->
+      fun dispatch onError ->
         try
           let result = f arg
           dispatch(ofSuccess result)
-        with _ ->
-          ()
+        with ex ->
+          onError("Sync command failed", ex)
 
     let attempt
       (f: 'Arg -> unit)
       (arg: 'Arg)
       (ofError: exn -> 'Msg)
       : Cmd<'Msg> =
-      fun dispatch ->
+      fun dispatch onError ->
         try
           f arg
-        with exn ->
-          dispatch(ofError exn)
+        with ex ->
+          try dispatch(ofError ex)
+          with ex2 -> onError("Error handler failed", ex2)
 
   module OfAsync =
     let perform
@@ -79,10 +80,13 @@ module Cmd =
       (arg: 'Arg)
       (ofSuccess: 'Result -> 'Msg)
       : Cmd<'Msg> =
-      fun dispatch ->
+      fun dispatch onError ->
         let computation = async {
-          let! result = f arg
-          dispatch(ofSuccess result)
+          try
+            let! result = f arg
+            dispatch(ofSuccess result)
+          with ex ->
+            onError("Async command failed", ex)
         }
 
         Async.StartImmediate computation
@@ -92,12 +96,13 @@ module Cmd =
       (arg: 'Arg)
       (ofError: exn -> 'Msg)
       : Cmd<'Msg> =
-      fun dispatch ->
+      fun dispatch onError ->
         let computation = async {
           try
             do! f arg
-          with exn ->
-            dispatch(ofError exn)
+          with ex ->
+            try dispatch(ofError ex)
+            with ex2 -> onError("Error handler failed", ex2)
         }
 
         Async.StartImmediate computation
@@ -108,10 +113,13 @@ module Cmd =
       (arg: 'Arg)
       (ofSuccess: 'Result -> 'Msg)
       : Cmd<'Msg> =
-      fun dispatch ->
+      fun dispatch onError ->
         let run () = task {
-          let! result = f arg
-          dispatch(ofSuccess result)
+          try
+            let! result = f arg
+            dispatch(ofSuccess result)
+          with ex ->
+            onError("Task command failed", ex)
         }
 
         run() |> ignore
@@ -121,12 +129,13 @@ module Cmd =
       (arg: 'Arg)
       (ofError: exn -> 'Msg)
       : Cmd<'Msg> =
-      fun dispatch ->
+      fun dispatch onError ->
         let run () = task {
           try
             do! f arg
-          with exn ->
-            dispatch(ofError exn)
+          with ex ->
+            try dispatch(ofError ex)
+            with ex2 -> onError("Error handler failed", ex2)
         }
 
         run() |> ignore
@@ -203,6 +212,9 @@ module Program =
 
     { program with Update = tracedUpdate }
 
+  let withErrorHandler (onError: string * exn -> unit) (program: Program<'Arg, 'Model, 'Msg, 'View>) =
+    { program with OnError = onError }
+
   let runWith (arg: 'Arg) (program: Program<'Arg, 'Model, 'Msg, 'View>) =
     let initModel, initCmd = program.Init arg
     let state = new BehaviorSubject<'Model>(initModel)
@@ -221,9 +233,11 @@ module Program =
                 if not(obj.ReferenceEquals(currentModel, newModel)) then
                   state.OnNext(newModel)
 
-                cmd(inbox.Post)
+                // Pass a contextual error handler that includes the message
+                cmd inbox.Post (fun (ctx, ex) -> 
+                    program.OnError ($"{ctx} [Context: {msg}]", ex))
               with exn ->
-                program.OnError("Update loop error", exn)
+                program.OnError($"Update loop error [Context: {msg}]", exn)
             )
 
           do! op.GetTask() |> Async.AwaitTask
@@ -235,7 +249,9 @@ module Program =
 
     let dispatch = mailbox.Post
 
-    initCmd dispatch
+    // Init Context
+    initCmd dispatch (fun (ctx, ex) -> 
+        program.OnError ($"{ctx} [Context: Init]", ex))
 
     try
       let sub = program.Subscribe initModel
@@ -281,31 +297,31 @@ module CSharp =
   let internal toAction (f: 'T -> unit) : Action<'T> = Action<'T>(f)
 
   type Command =
-    static member None<'Msg>() : Action<Action<'Msg>> =
-      Action<Action<'Msg>>(fun d -> Cmd.none(toFs d))
+    static member None<'Msg>() : Action<Action<'Msg>, Action<string, exn>> =
+      Action<Action<'Msg>, Action<string, exn>>(fun d e -> Cmd.none(toFs d) (fun (s, ex) -> e.Invoke(s, ex)))
 
-    static member OfMsg<'Msg>(msg: 'Msg) : Action<Action<'Msg>> =
-      Action<Action<'Msg>>(fun d -> Cmd.ofMsg msg (toFs d))
+    static member OfMsg<'Msg>(msg: 'Msg) : Action<Action<'Msg>, Action<string, exn>> =
+      Action<Action<'Msg>, Action<string, exn>>(fun d e -> Cmd.ofMsg msg (toFs d) (fun (s, ex) -> e.Invoke(s, ex)))
 
     static member Batch<'Msg>
-      (cmds: seq<Action<Action<'Msg>>>)
-      : Action<Action<'Msg>> =
-      let fsCmds = cmds |> Seq.map(fun c -> (fun d -> c.Invoke(toAction d)))
+      (cmds: seq<Action<Action<'Msg>, Action<string, exn>>>)
+      : Action<Action<'Msg>, Action<string, exn>> =
+      let fsCmds = cmds |> Seq.map(fun c -> (fun d e -> c.Invoke(toAction d, Action<string, exn>(fun s ex -> e(s, ex)))))
       let batch = Cmd.batch fsCmds
-      Action<Action<'Msg>>(fun d -> batch(toFs d))
+      Action<Action<'Msg>, Action<string, exn>>(fun d e -> batch(toFs d) (fun (s, ex) -> e.Invoke(s, ex)))
 
     static member Map<'A, 'Msg>
-      (mapping: Func<'A, 'Msg>, cmd: Action<Action<'A>>)
-      : Action<Action<'Msg>> =
-      let fsCmd = fun d -> cmd.Invoke(toAction d)
+      (mapping: Func<'A, 'Msg>, cmd: Action<Action<'A>, Action<string, exn>>)
+      : Action<Action<'Msg>, Action<string, exn>> =
+      let fsCmd = fun d e -> cmd.Invoke(toAction d, Action<string, exn>(fun s ex -> e(s, ex)))
       let mapped = Cmd.map mapping.Invoke fsCmd
-      Action<Action<'Msg>>(fun d -> mapped(toFs d))
+      Action<Action<'Msg>, Action<string, exn>>(fun d e -> mapped(toFs d) (fun (s, ex) -> e.Invoke(s, ex)))
 
     static member Perform<'Arg, 'Result, 'Msg>
       (func: Func<'Arg, 'Result>, arg: 'Arg, ofSuccess: Func<'Result, 'Msg>)
       =
       let cmd = Cmd.OfFunc.perform func.Invoke arg ofSuccess.Invoke
-      Action<Action<'Msg>>(fun d -> cmd(toFs d))
+      Action<Action<'Msg>, Action<string, exn>>(fun d e -> cmd(toFs d) (fun (s, ex) -> e.Invoke(s, ex)))
 
     static member PerformTask<'Arg, 'Result, 'Msg>
       (
@@ -314,7 +330,7 @@ module CSharp =
         ofSuccess: Func<'Result, 'Msg>
       ) =
       let cmd = Cmd.OfTask.perform func.Invoke arg ofSuccess.Invoke
-      Action<Action<'Msg>>(fun d -> cmd(toFs d))
+      Action<Action<'Msg>, Action<string, exn>>(fun d e -> cmd(toFs d) (fun (s, ex) -> e.Invoke(s, ex)))
 
   type Subscription =
     static member Batch<'Msg>
@@ -375,8 +391,8 @@ module CSharp =
 
   type ProgramBuilder<'Arg, 'Model, 'Msg, 'View>
     (
-      init: Func<'Arg, ValueTuple<'Model, Action<Action<'Msg>>>>,
-      update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>>>>,
+      init: Func<'Arg, ValueTuple<'Model, Action<Action<'Msg>, Action<string, exn>>>>,
+      update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>, Action<string, exn>>>>,
       view: Func<IObservable<'Model>, Action<'Msg>, 'View>
     ) =
 
@@ -390,6 +406,7 @@ module CSharp =
       )
 
     let mutable _trace = false
+    let mutable _onError: Action<string, exn> = Action<_,_>(fun msg ex -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex)
 
     member this.WithSubscription
       (sub: Func<'Model, Func<Action<'Msg>, IDisposable>>)
@@ -401,14 +418,18 @@ module CSharp =
       _trace <- true
       this
 
+    member this.WithErrorHandler(handler: Action<string, exn>) =
+      _onError <- handler
+      this
+
     member this.RunWith(arg: 'Arg) =
       let fsInit a =
         let struct (m, c) = init.Invoke(a)
-        m, (fun d -> c.Invoke(toAction d))
+        m, (fun d e -> c.Invoke(toAction d, Action<string, exn>(fun s ex -> e(s, ex))))
 
       let fsUpdate m s =
         let struct (m, c) = update.Invoke(m, s)
-        m, (fun d -> c.Invoke(toAction d))
+        m, (fun d e -> c.Invoke(toAction d, Action<string, exn>(fun s ex -> e(s, ex))))
 
       let fsView obs d = view.Invoke(obs, toAction d)
 
@@ -421,6 +442,9 @@ module CSharp =
 
       if _trace then
         prog <- FsProgram.withConsoleTrace prog
+      
+      // Apply the error handler
+      prog <- FsProgram.withErrorHandler (fun (msg, ex) -> _onError.Invoke(msg, ex)) prog
 
       FsProgram.runWith arg prog
 
@@ -454,16 +478,16 @@ module CSharp =
   type Program =
     static member MkProgram<'Arg, 'Model, 'Msg, 'View>
       (
-        init: Func<'Arg, ValueTuple<'Model, Action<Action<'Msg>>>>,
-        update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>>>>,
+        init: Func<'Arg, ValueTuple<'Model, Action<Action<'Msg>, Action<string, exn>>>>,
+        update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>, Action<string, exn>>>>,
         view: Func<IObservable<'Model>, Action<'Msg>, 'View>
       ) =
       new ProgramBuilder<_, _, _, _>(init, update, view)
 
     static member MkProgram<'Model, 'Msg, 'View>
       (
-        init: Func<ValueTuple<'Model, Action<Action<'Msg>>>>,
-        update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>>>>,
+        init: Func<ValueTuple<'Model, Action<Action<'Msg>, Action<string, exn>>>>,
+        update: Func<'Msg, 'Model, ValueTuple<'Model, Action<Action<'Msg>, Action<string, exn>>>>,
         view: Func<IObservable<'Model>, Action<'Msg>, 'View>
       ) =
       let wrappedInit (_: unit) = init.Invoke()
