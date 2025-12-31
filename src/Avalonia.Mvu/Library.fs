@@ -132,6 +132,33 @@ module Cmd =
         run() |> ignore
 
 // -----------------------------------------------------------
+// 2.1 SUB HELPERS
+// -----------------------------------------------------------
+
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
+module Sub =
+  let none: Sub<'Msg> =
+    fun _ ->
+      { new IDisposable with
+          member _.Dispose() = ()
+      }
+
+  let batch (subs: seq<Sub<'Msg>>) : Sub<'Msg> =
+    fun dispatch ->
+      let disposables = subs |> Seq.map(fun s -> s dispatch) |> Seq.toArray
+
+      { new IDisposable with
+          member _.Dispose() =
+            for d in disposables do
+              d.Dispose()
+      }
+
+  let map (mapping: 'A -> 'Msg) (sub: Sub<'A>) : Sub<'Msg> =
+    fun dispatch ->
+      let dispatchA a = dispatch(mapping a)
+      sub dispatchA
+
+// -----------------------------------------------------------
 // 3. PROGRAM MODULE
 // -----------------------------------------------------------
 
@@ -147,13 +174,7 @@ module Program =
       Init = init
       Update = update
       View = view
-      Subscribe =
-        fun _ ->
-          (fun _ ->
-            { new IDisposable with
-                member _.Dispose() = ()
-            }
-          )
+      Subscribe = fun _ -> Sub.none
       OnError = fun (msg, ex) -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex
     }
 
@@ -273,6 +294,13 @@ module CSharp =
       let batch = Cmd.batch fsCmds
       Action<Action<'Msg>>(fun d -> batch(toFs d))
 
+    static member Map<'A, 'Msg>
+      (mapping: Func<'A, 'Msg>, cmd: Action<Action<'A>>)
+      : Action<Action<'Msg>> =
+      let fsCmd = fun d -> cmd.Invoke(toAction d)
+      let mapped = Cmd.map mapping.Invoke fsCmd
+      Action<Action<'Msg>>(fun d -> mapped(toFs d))
+
     static member Perform<'Arg, 'Result, 'Msg>
       (func: Func<'Arg, 'Result>, arg: 'Arg, ofSuccess: Func<'Result, 'Msg>)
       =
@@ -289,6 +317,20 @@ module CSharp =
       Action<Action<'Msg>>(fun d -> cmd(toFs d))
 
   type Subscription =
+    static member Batch<'Msg>
+      (subs: seq<Func<Action<'Msg>, IDisposable>>)
+      : Func<Action<'Msg>, IDisposable> =
+      let fsSubs = subs |> Seq.map(fun s -> (fun d -> s.Invoke(toAction d)))
+      let batch = Sub.batch fsSubs
+      Func<_, _>(fun d -> batch(toFs d))
+
+    static member Map<'A, 'Msg>
+      (mapping: Func<'A, 'Msg>, sub: Func<Action<'A>, IDisposable>)
+      : Func<Action<'Msg>, IDisposable> =
+      let fsSub = fun d -> sub.Invoke(toAction d)
+      let mapped = Sub.map mapping.Invoke fsSub
+      Func<_, _>(fun d -> mapped(toFs d))
+
     static member FromEvent<'Msg, 'EventArgs>
       (
         addHandler: Action<EventHandler<'EventArgs>>,
@@ -298,7 +340,7 @@ module CSharp =
 
       Func<_, _>(fun (dispatch: Action<'Msg>) ->
         let fsSub =
-          (fun d ->
+          fun d ->
             let handler =
               EventHandler<'EventArgs>(fun _ args -> d(map.Invoke(args)))
 
@@ -307,7 +349,6 @@ module CSharp =
             { new IDisposable with
                 member _.Dispose() = removeHandler.Invoke(handler)
             }
-          )
 
         fsSub(toFs dispatch)
       )
@@ -317,7 +358,7 @@ module CSharp =
       : Func<Action<'Msg>, IDisposable> =
       Func<_, _>(fun (dispatch: Action<'Msg>) ->
         let fsSub =
-          (fun d ->
+          fun d ->
             let timer = new System.Timers.Timer(interval.TotalMilliseconds)
             timer.Elapsed.Add(fun _ -> d(tick.Invoke()))
             timer.AutoReset <- true
@@ -328,7 +369,6 @@ module CSharp =
                   timer.Stop()
                   timer.Dispose()
             }
-          )
 
         fsSub(toFs dispatch)
       )
