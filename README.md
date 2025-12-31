@@ -16,9 +16,9 @@ In a standard MVU loop, the `View` function is often called every time the `Mode
 
 ### Why this approach?
 
-*   **Zero VDOM Overhead:** There is no tree diffing. Changes propagate directly from the Model stream to the target properties.
-*   **High Performance:** Only the specific properties that change are updated.
-*   **Native Control Interop:** Since the View returns actual Avalonia controls, you can easily use any 3rd party control, existing behaviors, or complex layouts without needing specialized wrappers.
+- **Zero VDOM Overhead:** There is no tree diffing. Changes propagate directly from the Model stream to the target properties.
+- **High Performance:** Only the specific properties that change are updated.
+- **Native Control Interop:** Since the View returns actual Avalonia controls, you can easily use any 3rd party control, existing behaviors, or complex layouts without needing specialized wrappers.
 
 ## Getting Started
 
@@ -57,7 +57,7 @@ public static class CounterModule
         var countText = model.Select(m => $"Count: {m.Count}");
 
         return StackPanel().Children(
-            TextBlock().Text(countText.ToBinding(), BindingMode.OneWay),
+            TextBlock().Text(countText),
             Button().Content("Increment").OnClick(e =>
                 e.Subscribe(_ => dispatch(new Msg.Increment()))
             )
@@ -78,15 +78,16 @@ let init () = { Count = 0 }, Cmd.none
 
 let update msg model =
     match msg with
-    | Increment -> { model with Count = model.Count + 1 }, Cmd.none
+    | Increment ->
+      { model with Count = model.Count + 1 }, Cmd.none
 
 let view (model: IObservable<Model>) dispatch =
-    let countText = model |> Observable.map (fun m -> sprintf "Count: %d" m.Count)
+    let countText = model |> Observable.map(fun m -> sprintf "Count: %d" m.Count)
 
     StackPanel().Children(
         TextBlock().Text(countText),
         Button().Content("Increment").OnClick(fun _ obs ->
-            obs |> Observable.subscribe (fun _ -> dispatch Increment) |> ignore
+            obs |> Observable.add(fun _ -> dispatch Increment)
         )
     )
 ```
@@ -95,9 +96,9 @@ let view (model: IObservable<Model>) dispatch =
 
 Avalonia.MVU supports scaling your application through **Module Composition**. You can nest components by mapping their Commands and Subscriptions, allowing you to build complex applications from small, isolated modules.
 
-*   `Command.Map` / `Cmd.map`
-*   `Subscription.Map` / `Sub.map`
-*   `Subscription.Batch` / `Sub.batch`
+- `Command.Map` / `Cmd.map`
+- `Subscription.Map` / `Sub.map`
+- `Subscription.Batch` / `Sub.batch`
 
 Check the [Samples](./src/samples/) folder for a comprehensive **Dashboard** example showcasing parent-child communication, async commands, and subscriptions in both languages.
 

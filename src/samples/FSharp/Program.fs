@@ -24,26 +24,10 @@ module Clock =
   let update (Tick time) _ = time, Cmd.none
 
   let subscribe _ =
-    let tick time = Tick time
-    // Create a timer subscription that ticks every second
-    let sub dispatch =
-      let timer =
-        new DispatcherTimer(
-          TimeSpan.FromSeconds(1.0),
-          DispatcherPriority.Background,
-          EventHandler(fun _ _ -> dispatch(tick DateTime.Now))
-        )
-
-      timer.Start()
-
-      { new IDisposable with
-          member _.Dispose() = timer.Stop()
-      }
-
-    sub
+    Sub.interval (TimeSpan.FromSeconds(1.0)) (fun () -> Tick DateTime.Now)
 
   let view (model: IObservable<Model>) (_: Dispatch<Msg>) =
-    let timeStr = model |> Observable.map(fun t -> t.ToString("HH:mm:ss"))
+    let timeStr = model |> Observable.map(fun t -> t.ToString "HH:mm:ss")
 
     Border()
       .CornerRadius(10.0)
@@ -55,7 +39,6 @@ module Clock =
           .FontSize(32.0)
           .HorizontalAlignment(HorizontalAlignment.Center)
           .Foreground(Brushes.LimeGreen)
-          .FontFamily("Courier New")
       )
 
 // ============================================================================
