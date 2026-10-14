@@ -10,14 +10,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Avalonia" Version="11.3.0" />
+    <PackageReference Include="Avalonia" Version="12.0.5" />
     <PackageReference Include="FSharp.Control.Reactive" Version="6.1.2" />
 
-    <PackageReference Include="NXUI" Version="11.3.0.1" />
-    <PackageReference Include="NXUI.Desktop" Version="11.3.0.1" />
+    <PackageReference Include="NXUI" Version="12.0.0" />
+    <PackageReference Include="NXUI.Desktop" Version="12.0.0" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Avalonia.Mvu\Avalonia.Mvu.fsproj" />
+    <ProjectReference Include="..\..\MVUish.Avalonia\MVUish.Avalonia.fsproj" />
   </ItemGroup>
 </Project>

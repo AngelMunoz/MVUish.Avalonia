@@ -7,8 +7,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
-using static Avalonia.Mvu.CSharp;
+using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
+using NXUI.HotReload.Nodes;
 
 public static class MainView
 {
@@ -16,6 +17,7 @@ public static class MainView
   public record Model(
       ClockModule.Model Clock,
       MetricsModule.Model Metrics,
+      NotesModule.Model Notes,
       string Title
   );
 
@@ -24,22 +26,25 @@ public static class MainView
   {
     public sealed record Clock(ClockModule.Msg M) : Msg;
     public sealed record Metrics(MetricsModule.Msg M) : Msg;
+    public sealed record Notes(NotesModule.Msg M) : Msg;
     public sealed record Rename(string NewTitle) : Msg;
   }
 
-  public static Control Build(Window _)
+  public static ElementBuilder<DockPanel> Build()
   {
     // INIT
     (Model, Action<Action<Msg>, Action<string, Exception>>) Init()
     {
       var (cModel, cCmd) = ClockModule.Init();
       var (mModel, mCmd) = MetricsModule.Init();
+      var (nModel, nCmd) = NotesModule.Init();
 
-      var model = new Model(cModel, mModel, "C# MVU Dashboard");
+      var model = new Model(cModel, mModel, nModel, "C# MVU Dashboard");
 
       var batch = Command.Batch([
                 Command.Map<ClockModule.Msg, Msg>(m => new Msg.Clock(m), cCmd),
-                Command.Map<MetricsModule.Msg, Msg>(m => new Msg.Metrics(m), mCmd)
+                Command.Map<MetricsModule.Msg, Msg>(m => new Msg.Metrics(m), mCmd),
+                Command.Map<NotesModule.Msg, Msg>(m => new Msg.Notes(m), nCmd)
             ]);
 
       return (model, batch);
@@ -61,7 +66,14 @@ public static class MainView
           var (mModel, mCmd) = MetricsModule.Update(m.M, model.Metrics);
           return (
               model with { Metrics = mModel },
-              Command.Map<MetricsModule.Msg, Msg>(m => new Msg.Metrics(m), mCmd)
+              Command.Map<MetricsModule.Msg, Msg>(x => new Msg.Metrics(x), mCmd)
+          );
+
+        case Msg.Notes n:
+          var (nModel, nCmd) = NotesModule.Update(n.M, model.Notes);
+          return (
+              model with { Notes = nModel },
+              Command.Map<NotesModule.Msg, Msg>(x => new Msg.Notes(x), nCmd)
           );
 
         case Msg.Rename r:
@@ -84,17 +96,19 @@ public static class MainView
     }
 
     // VIEW
-    Control View(IObservable<Model> model, Action<Msg> dispatch)
+    ElementBuilder<DockPanel> View(IObservable<Model> model, Action<Msg> dispatch)
     {
       // Lens
       var clockObs = model.Select(m => m.Clock);
       var metricsObs = model.Select(m => m.Metrics);
+      var notesObs = model.Select(m => m.Notes);
 
       // Dispatchers
       void dispatchClock(ClockModule.Msg m) => dispatch(new Msg.Clock(m));
       void dispatchMetrics(MetricsModule.Msg m) => dispatch(new Msg.Metrics(m));
+      void dispatchNotes(NotesModule.Msg m) => dispatch(new Msg.Notes(m));
 
-      return DockPanel()
+      var root = DockPanel()
           .LastChildFill(true)
           .Children(
               TextBlock()
@@ -115,19 +129,25 @@ public static class MainView
                       // Child 2
                       MetricsModule.View(metricsObs, dispatchMetrics),
 
+                      // Child 3
+                      NotesModule.View(notesObs, dispatchNotes),
+
                       // Parent Control
                       StackPanel()
                           .Spacing(5)
                           .Children(
                               Label().Content("Dashboard Settings").Foreground(Brushes.LightGray),
-                              TextBox()
+                              TextBox(out var titleBox)
                                   .Text(model.Select(m => m.Title))
-                                  .OnText((_, obs) =>
-                                      obs.Subscribe(t => dispatch(new Msg.Rename(t)))
-                                  )
                           )
                   )
           );
+
+      titleBox.ObserveText().Subscribe(t =>
+          dispatch(new Msg.Rename(t ?? string.Empty))
+      );
+
+      return root;
     }
 
     return Program.MkProgram(

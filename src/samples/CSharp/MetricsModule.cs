@@ -7,8 +7,9 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
-using static Avalonia.Mvu.CSharp;
+using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
+using NXUI.HotReload.Nodes;
 
 public static class MetricsModule
 {
@@ -53,7 +54,7 @@ public static class MetricsModule
     }
   }
 
-  public static Control View(IObservable<Model> model, Action<Msg> _)
+  public static ElementBuilder<Border> View(IObservable<Model> model, Action<Msg> _)
   {
     var cpuText = model.Select(m => $"CPU: {m.Cpu}%");
     var ramText = model.Select(m => $"RAM: {m.Ram} MB");

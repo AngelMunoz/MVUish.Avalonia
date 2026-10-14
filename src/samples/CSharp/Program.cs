@@ -1,20 +1,18 @@
 using CSharp;
 
 
-Window View()
-{
-  Window(out var window)
-    .Title("NXUI + Avalonia.MVU")
-    .Width(300)
-    .Height(300)
-    .Content(MainView.Build(window));
-  return window;
-}
+Window View() =>
+    Window()
+        .Title("NXUI + MVUish.Avalonia")
+        .Width(420)
+        .Height(840)
+        .Content(MainView.Build())
+        .Mount();
 
 
 AppBuilder
   .Configure<Application>()
   .UsePlatformDetect()
   .UseFluentTheme(ThemeVariant.Dark)
-  .WithApplicationName("NXUI + Avalonia.MVU")
+  .WithApplicationName("NXUI + MVUish.Avalonia")
   .StartWithClassicDesktopLifetime(View, args);

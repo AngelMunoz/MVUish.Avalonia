@@ -6,8 +6,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
-using static Avalonia.Mvu.CSharp;
+using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
+using NXUI.HotReload.Nodes;
 
 public static class ClockModule
 {
@@ -35,7 +36,7 @@ public static class ClockModule
           () => new Msg.Tick(DateTime.Now)
       );
 
-  public static Control View(IObservable<Model> model, Action<Msg> _)
+  public static ElementBuilder<Border> View(IObservable<Model> model, Action<Msg> _)
   {
     var timeStr = model.Select(m => m.Time.ToString("HH:mm:ss"));
 
