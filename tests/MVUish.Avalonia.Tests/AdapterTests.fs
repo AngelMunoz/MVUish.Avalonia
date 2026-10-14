@@ -1,4 +1,4 @@
-module Avalonia.Mvu.Tests.AdapterTests
+module MVUish.Avalonia.Tests.AdapterTests
 
 open System
 open System.Collections.Generic
@@ -9,8 +9,8 @@ open System.Threading
 open Avalonia
 open Avalonia.Controls
 open Avalonia.Headless
-open Avalonia.Mvu.Collections
-open Avalonia.Mvu.Tests.DiffTests
+open MVUish.Avalonia.Collections
+open MVUish.Avalonia.Tests.DiffTests
 open Xunit
 
 // NotifyCollectionChangedAction cases are not plain F# identifiers.
