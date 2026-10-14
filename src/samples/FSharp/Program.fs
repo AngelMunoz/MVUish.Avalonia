@@ -13,8 +13,8 @@ open NXUI.Extensions
 open FSharp.Control.Reactive
 // Keep the MVU namespaces last: F# extension shadowing must pick the
 // collection bindings over the NXUI property binder of the same name.
-open Avalonia.Mvu
-open Avalonia.Mvu.Collections
+open MVUish.Avalonia
+open MVUish.Avalonia.Collections
 
 // ============================================================================
 // MODULE 1: CLOCK (Subscription Demo)

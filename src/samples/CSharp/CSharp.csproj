@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Avalonia.Mvu\Avalonia.Mvu.fsproj" />
+    <ProjectReference Include="..\..\MVUish.Avalonia\MVUish.Avalonia.fsproj" />
   </ItemGroup>
 
 </Project>

@@ -1,9 +1,9 @@
-module Avalonia.Mvu.Tests.DiffTests
+module MVUish.Avalonia.Tests.DiffTests
 
 open System
 open System.Collections.Generic
 open System.Collections.ObjectModel
-open Avalonia.Mvu.Collections
+open MVUish.Avalonia.Collections
 open Xunit
 
 type Note = { Id: int; Text: string }

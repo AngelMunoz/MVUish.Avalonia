@@ -1,4 +1,4 @@
-module Avalonia.Mvu
+module MVUish.Avalonia
 
 open System
 open System.Collections.Generic
@@ -234,7 +234,7 @@ module Program =
     Update = update
     View = view
     Subscribe = fun _ -> Sub.none
-    OnError = fun (msg, ex) -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex
+    OnError = fun (msg, ex) -> printfn "MVUish.Avalonia Error: %s\n%O" msg ex
   }
 
   let mkSimple
@@ -506,7 +506,7 @@ module CSharp =
     let mutable _trace = false
 
     let mutable _onError: Action<string, exn> =
-      Action<_, _>(fun msg ex -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex)
+      Action<_, _>(fun msg ex -> printfn "MVUish.Avalonia Error: %s\n%O" msg ex)
 
     member this.WithSubscription
       (sub: Func<'Model, Func<Action<'Msg>, IDisposable>>)

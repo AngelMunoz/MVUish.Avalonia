@@ -8,9 +8,9 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
-using static Avalonia.Mvu.CSharp;
+using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
-using NotesBinding = Avalonia.Mvu.Collections.CollectionExtensions;
+using NotesBinding = MVUish.Avalonia.Collections.CollectionExtensions;
 
 public static class NotesModule
 {

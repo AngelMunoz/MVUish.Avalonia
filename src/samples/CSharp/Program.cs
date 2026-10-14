@@ -3,7 +3,7 @@ using CSharp;
 
 Window View() =>
     Window()
-        .Title("NXUI + Avalonia.MVU")
+        .Title("NXUI + MVUish.Avalonia")
         .Width(420)
         .Height(840)
         .Content(MainView.Build())
@@ -14,5 +14,5 @@ AppBuilder
   .Configure<Application>()
   .UsePlatformDetect()
   .UseFluentTheme(ThemeVariant.Dark)
-  .WithApplicationName("NXUI + Avalonia.MVU")
+  .WithApplicationName("NXUI + MVUish.Avalonia")
   .StartWithClassicDesktopLifetime(View, args);
