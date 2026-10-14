@@ -6,4 +6,7 @@
     <Project Path="src/samples/CSharp/CSharp.csproj" />
     <Project Path="src/samples/FSharp/FSharp.fsproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Avalonia.Mvu.Tests/Avalonia.Mvu.Tests.fsproj" />
+  </Folder>
 </Solution>
