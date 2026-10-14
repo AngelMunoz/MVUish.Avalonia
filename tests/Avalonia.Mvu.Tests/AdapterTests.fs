@@ -170,9 +170,7 @@ let ``F# list snapshots bind without a manual cast`` () =
   onUi(fun () ->
     let list = ListBox()
     let source = new Subject<Note list>()
-
-    CollectionExtensions.BindItemsSource(list, source, (fun n -> n.Id))
-    |> ignore
+    list.BindItemsSource(source, (fun n -> n.Id)) |> ignore
 
     source.OnNext([ note 1; note 2 ])
     Assert.Equal(2, list.ItemCount)

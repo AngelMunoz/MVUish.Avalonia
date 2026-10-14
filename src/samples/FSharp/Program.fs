@@ -11,7 +11,10 @@ open Avalonia.Threading
 open Avalonia.Data
 open NXUI.Extensions
 open FSharp.Control.Reactive
+// Keep the MVU namespaces last: F# extension shadowing must pick the
+// collection bindings over the NXUI property binder of the same name.
 open Avalonia.Mvu
+open Avalonia.Mvu.Collections
 
 // ============================================================================
 // MODULE 1: CLOCK (Subscription Demo)
@@ -202,15 +205,8 @@ module Notes =
     let listBox =
       ListBox().ItemTemplate(rowTemplate).MinHeight(160.0).MaxHeight(200.0)
 
-    // NXUI ships its own BindItemsSource extension for the raw ItemsSource
-    // property, so call the adapter statically; this overload takes F#
-    // list snapshots directly.
-    Collections.CollectionExtensions.BindItemsSource(
-      listBox,
-      notes,
-      (fun n -> n.Id)
-    )
-    |> ignore
+    // The list-typed overload accepts IObservable<Note list> directly.
+    listBox.BindItemsSource(notes, (fun n -> n.Id)) |> ignore
 
     let mutable draft = ""
 
