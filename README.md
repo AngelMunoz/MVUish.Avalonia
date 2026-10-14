@@ -1,14 +1,14 @@
-# Avalonia.MVU
+# MVUish.Avalonia
 
-**Avalonia.MVU** is a lightweight, performant **Model-View-Update (MVU)** library for Avalonia, designed for both **C#** and **F#**.
+**MVUish.Avalonia** is a lightweight, performant **Model-View-Update (MVU)** library for Avalonia, designed for both **C#** and **F#**.
 
-Unlike traditional MVU implementations (like Elm or Fabulous) that often rely on a Virtual DOM (VDOM) and tree diffing to update the UI, **Avalonia.MVU** leverages **Reactive Extensions (Rx)** to create direct, fine-grained bindings between your state and your controls.
+Unlike traditional MVU implementations (like Elm or Fabulous) that often rely on a Virtual DOM (VDOM) and tree diffing to update the UI, **MVUish.Avalonia** leverages **Reactive Extensions (Rx)** to create direct, fine-grained bindings between your state and your controls.
 
 ## The "Reactive MVU" Difference
 
 In a standard MVU loop, the `View` function is often called every time the `Model` changes, producing a new virtual tree which is then diffed against the previous one. While powerful, this can incur performance overhead and often requires wrappers around native controls.
 
-**Avalonia.MVU** takes a different approach, effectively implementing a **Model-Update-Observable** pattern:
+**MVUish.Avalonia** takes a different approach, effectively implementing a **Model-Update-Observable** pattern:
 
 1.  **Model & Update (The "MU"):** Your application logic remains pure and immutable. You define a `Model` and an `Update` function that processes `Messages` to produce a new `Model`. This is the standard Elmish heart of the app.
 2.  **View (The "Reactive Binding"):** The `View` function is called **only once** during initialization. Instead of receiving a snapshot of the `Model`, it receives an `IObservable<Model>`.
@@ -22,14 +22,16 @@ In a standard MVU loop, the `View` function is often called every time the `Mode
 
 ## Getting Started
 
+Requires **.NET 10** and **Avalonia 12**. The samples and templates also use [NXUI] 12 for code-built views.
+
 This library provides a unified API for both C# and F# developers, treating both as first-class citizens.
 
 ### C# Example
 
-We provide a specialized `Avalonia.Mvu.CSharp` module to hide F# specifics and provide a familiar, idiomatic C# API.
+We provide a specialized `MVUish.Avalonia.CSharp` module to hide F# specifics and provide a familiar, idiomatic C# API.
 
 ```csharp
-using static Avalonia.Mvu.CSharp;
+using static MVUish.Avalonia.CSharp;
 
 public static class CounterModule
 {
@@ -94,13 +96,78 @@ let view (model: IObservable<Model>) dispatch =
 
 ## Composition and Scaling
 
-Avalonia.MVU supports scaling your application through **Module Composition**. You can nest components by mapping their Commands and Subscriptions, allowing you to build complex applications from small, isolated modules.
+MVUish.Avalonia supports scaling your application through **Module Composition**. You can nest components by mapping their Commands and Subscriptions, allowing you to build complex applications from small, isolated modules.
 
 - `Command.Map` / `Cmd.map`
 - `Subscription.Map` / `Sub.map`
 - `Subscription.Batch` / `Sub.batch`
 
 Check the [Samples](./src/samples/) folder for a comprehensive **Dashboard** example showcasing parent-child communication, async commands, and subscriptions in both languages.
+
+## Collections
+
+Assigning a new list to `ItemsSource` on every model change rebuilds every item container: selection, scroll position, and any state a row holds are lost. The collection bindings instead keep one owned `ObservableCollection` as `ItemsSource` and apply each snapshot from the model as minimal deltas, so containers are reused.
+
+Both bindings return `IDisposable`, assign `ItemsSource` once, and unsubscribe when the control detaches from the visual tree.
+
+### Keyed binding (preferred)
+
+Match items by a stable key. Items whose key disappears are removed, new keys are inserted, a surviving key with a changed item raises a `Replace`, and reorders raise `Move` events.
+
+```fsharp
+open NXUI.Extensions
+// Open the MVU namespaces after NXUI: F# extension shadowing must pick
+// these bindings over the NXUI property binder of the same name.
+open MVUish.Avalonia
+open MVUish.Avalonia.Collections
+
+type Note = { Id: Guid; Text: string }
+
+let view (model: IObservable<Model>) (dispatch: Dispatch<Msg>) =
+  let notes = model |> Observable.map (fun m -> m.Notes)
+  let listBox = ListBox().MinHeight(160.0)
+
+  // The list-typed overload accepts IObservable<Note list> directly.
+  listBox.BindItemsSource(notes, (fun n -> n.Id)) |> ignore
+
+  listBox
+```
+
+```csharp
+using MVUish.Avalonia.Collections;
+
+var listBox = new ListBox { MinHeight = 160 };
+CollectionExtensions.BindItemsSource(listBox, model.Select(m => m.Notes), n => n.Id);
+```
+
+A snapshot that repeats a key throws `ArgumentException`. Inside a `Program` view the throw surfaces through the program's `OnError` handler instead of crashing the app.
+
+> NXUI ships its own `BindItemsSource` extension that binds the raw `ItemsSource` property. In F#, open `MVUish.Avalonia.Collections` after `NXUI.Extensions` so shadowing picks this adapter, as shown above. In C#, call `CollectionExtensions` statically as shown above.
+
+### Structural binding
+
+`BindItemsSourceStructural` (`Extensions.BindItemsSourceStructural` in F#, `CollectionExtensions.BindItemsSource` without a key in C#) diffs by structural equality instead of keys. Repeated values are allowed. Prefer the keyed binding: it also matches moved items.
+
+### Whole-list fallback
+
+For short lists where none of the row state matters, `BindStream` on `ItemsControl.ItemsSourceProperty` still works — every emission reassigns the whole list and Avalonia resets the control. That is the cheapest option for a handful of items.
+
+### Threading
+
+Both bindings apply changes on the thread that emits the snapshot. `Program` dispatches on the UI thread, so model streams need nothing extra. Sources that emit from background threads must hop first, for example with `Observable.observeOn` on `Avalonia.Threading.Dispatcher.UIThread`.
+
+## Project templates
+
+A `dotnet new` template pack lives in [templates/](./templates/):
+
+```
+dotnet pack templates/MVUish.Avalonia.Templates.csproj
+dotnet new install <path-to-the-produced-nupkg>
+dotnet new mvu-fsharp -o MyApp
+dotnet new mvu-csharp -o MyApp
+```
+
+Each template generates a minimal clock app wired with this library and NXUI. The generated app references the library as a source project; swap that reference for a `PackageReference` when you consume a published build.
 
 ## Existing Alternatives
 

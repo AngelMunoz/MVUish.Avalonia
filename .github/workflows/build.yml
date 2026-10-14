@@ -24,3 +24,17 @@ jobs:
           dotnet-version: 10.0.x
       - name: Build Release
         run: dotnet build -c Release
+      - name: Test Release
+        run: dotnet test -c Release --no-build
+
+  pack-templates:
+    name: Pack templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Pack Release
+        run: dotnet pack templates/MVUish.Avalonia.Templates.csproj -c Release

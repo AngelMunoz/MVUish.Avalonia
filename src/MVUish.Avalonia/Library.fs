@@ -1,11 +1,14 @@
-module Avalonia.Mvu
+module MVUish.Avalonia
 
 open System
+open System.Collections.Generic
+open System.Collections.ObjectModel
 open System.Runtime.CompilerServices
 open System.Threading.Tasks
 open System.Reactive.Subjects
 open System.Reactive.Linq
 open Avalonia
+open Avalonia.Controls
 open Avalonia.Threading
 
 // -----------------------------------------------------------
@@ -231,7 +234,7 @@ module Program =
     Update = update
     View = view
     Subscribe = fun _ -> Sub.none
-    OnError = fun (msg, ex) -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex
+    OnError = fun (msg, ex) -> printfn "MVUish.Avalonia Error: %s\n%O" msg ex
   }
 
   let mkSimple
@@ -503,7 +506,7 @@ module CSharp =
     let mutable _trace = false
 
     let mutable _onError: Action<string, exn> =
-      Action<_, _>(fun msg ex -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex)
+      Action<_, _>(fun msg ex -> printfn "MVUish.Avalonia Error: %s\n%O" msg ex)
 
     member this.WithSubscription
       (sub: Func<'Model, Func<Action<'Msg>, IDisposable>>)
@@ -582,7 +585,6 @@ module CSharp =
 
     member this.Run() = this.ToFull().Run()
 
-
   type Program =
     static member MkProgram<'Arg, 'Model, 'Msg, 'View>
       (
@@ -637,3 +639,285 @@ module CSharp =
         update,
         view
       )
+
+
+// -----------------------------------------------------------
+// 6. COLLECTION BINDINGS
+// -----------------------------------------------------------
+
+module Collections =
+
+  /// One minimal mutation to apply to an items collection.
+  /// Indices refer to the collection state at the moment the change applies.
+  type Change<'T> =
+    | Insert of index: int * item: 'T
+    | Remove of index: int
+    | Set of index: int * item: 'T
+    | Move of oldIndex: int * newIndex: int
+
+  /// Keys that appear more than once on one side of a keyed diff.
+  type DuplicateKeys<'K> = { Old: 'K list; New: 'K list }
+
+  /// Pure diff functions between item snapshots. No UI types involved.
+  module Diff =
+
+    let private duplicateKeys (keys: 'K array) : 'K list =
+      let seen = HashSet<'K>()
+      let duplicates = HashSet<'K>()
+
+      for key in keys do
+        if not(seen.Add key) then
+          duplicates.Add key |> ignore
+
+      Seq.toList duplicates
+
+    /// Compute the minimal changes that turn oldItems into newItems,
+    /// matching items by keyOf. A key that survives while its item changed
+    /// produces a Set. Returns DuplicateKeys when either side repeats a key.
+    let keyed
+      (keyOf: 'T -> 'K)
+      (oldItems: IReadOnlyList<'T>)
+      (newItems: IReadOnlyList<'T>)
+      : Result<Change<'T> list, DuplicateKeys<'K>> =
+      let oldKeys = Array.init oldItems.Count (fun i -> keyOf oldItems[i])
+      let newKeys = Array.init newItems.Count (fun i -> keyOf newItems[i])
+
+      let oldDuplicates = duplicateKeys oldKeys
+      let newDuplicates = duplicateKeys newKeys
+
+      if not(List.isEmpty oldDuplicates && List.isEmpty newDuplicates) then
+        Error {
+          Old = oldDuplicates
+          New = newDuplicates
+        }
+      else
+        let newKeySet = HashSet<'K>(newKeys)
+        let changes = ResizeArray<Change<'T>>()
+
+        // Removes run from the tail down so each index stays valid as the
+        // changes apply in order.
+        for i = oldKeys.Length - 1 downto 0 do
+          if not(newKeySet.Contains oldKeys[i]) then
+            changes.Add(Remove i)
+
+        // Surviving items in old order.
+        let working = ResizeArray<'T>()
+        let workingKeys = ResizeArray<'K>()
+
+        for i = 0 to oldKeys.Length - 1 do
+          if newKeySet.Contains oldKeys[i] then
+            working.Add(oldItems[i])
+            workingKeys.Add(oldKeys[i])
+
+        // Walk the new list. The working prefix [0..j-1] always matches
+        // the new prefix, so a key found here sits after j.
+        for j = 0 to newKeys.Length - 1 do
+          let key = newKeys[j]
+          let item = newItems[j]
+          let aligned = j < workingKeys.Count && workingKeys[j] = key
+
+          if not aligned then
+            match workingKeys |> Seq.tryFindIndex(fun k -> k = key) with
+            | Some sourceIndex ->
+              changes.Add(Move(sourceIndex, j))
+              working.RemoveAt(sourceIndex)
+              workingKeys.RemoveAt(sourceIndex)
+              working.Insert(j, item)
+              workingKeys.Insert(j, key)
+            | None ->
+              changes.Add(Insert(j, item))
+              working.Insert(j, item)
+              workingKeys.Insert(j, key)
+
+          if working[j] <> item then
+            changes.Add(Set(j, item))
+            working[j] <- item
+
+        Ok(List.ofSeq changes)
+
+    /// Compute changes that turn oldItems into newItems using structural
+    /// equality, without keys. A remove and insert that meet at one
+    /// position collapse into a single Set. Repeated values are allowed.
+    /// Cost is O(old count * new count) time and space.
+    let structural
+      (oldItems: IReadOnlyList<'T>)
+      (newItems: IReadOnlyList<'T>)
+      : Change<'T> list =
+      let oldCount = oldItems.Count
+      let newCount = newItems.Count
+
+      // table[i, j] holds the longest common subsequence length of
+      // oldItems[i..] and newItems[j..].
+      let table = Array2D.zeroCreate (oldCount + 1) (newCount + 1)
+
+      for i = oldCount - 1 downto 0 do
+        for j = newCount - 1 downto 0 do
+          table[i, j] <-
+            if oldItems[i] = newItems[j] then
+              1 + table[i + 1, j + 1]
+            else
+              max table[i + 1, j] table[i, j + 1]
+
+      let changes = ResizeArray<Change<'T>>()
+      let mutable i = 0
+      let mutable j = 0
+      // Live index shift: items inserted so far minus items removed so far.
+      let mutable shift = 0
+
+      while i < oldCount && j < newCount do
+        if oldItems[i] = newItems[j] then
+          i <- i + 1
+          j <- j + 1
+        elif table[i + 1, j + 1] = table[i, j] then
+          // Substituting costs no subsequence length, so one Set beats a
+          // remove and insert pair.
+          changes.Add(Set(j, newItems[j]))
+          i <- i + 1
+          j <- j + 1
+        elif table[i + 1, j] >= table[i, j + 1] then
+          changes.Add(Remove(i + shift))
+          shift <- shift - 1
+          i <- i + 1
+        else
+          changes.Add(Insert(j, newItems[j]))
+          shift <- shift + 1
+          j <- j + 1
+
+      while i < oldCount do
+        changes.Add(Remove(i + shift))
+        shift <- shift - 1
+        i <- i + 1
+
+      while j < newCount do
+        changes.Add(Insert(j, newItems[j]))
+        j <- j + 1
+
+      List.ofSeq changes
+
+    /// Apply changes to a collection, in order.
+    let apply
+      (collection: ObservableCollection<'T>)
+      (changes: Change<'T> list)
+      : unit =
+      for change in changes do
+        match change with
+        | Insert(index, item) -> collection.Insert(index, item)
+        | Remove index -> collection.RemoveAt(index)
+        | Set(index, item) -> collection[index] <- item
+        | Move(oldIndex, newIndex) -> collection.Move(oldIndex, newIndex)
+
+  [<Extension>]
+  module Extensions =
+
+    let internal bindItems
+      (control: ItemsControl)
+      (source: IObservable<IReadOnlyList<'T>>)
+      (compute: IReadOnlyList<'T> -> IReadOnlyList<'T> -> Change<'T> list)
+      : IDisposable =
+      let collection = ObservableCollection<'T>()
+      control.ItemsSource <- collection
+
+      let mutable current: IReadOnlyList<'T> =
+        Array.empty<'T> :> IReadOnlyList<'T>
+
+      let handle items =
+        compute current items |> Diff.apply collection
+        current <- items
+
+      let subscription = Observable.subscribe handle source
+
+      control.DetachedFromVisualTree.Add(fun _ -> subscription.Dispose())
+
+      subscription
+
+    let internal keyedCompute
+      (keyOf: 'T -> 'K)
+      : IReadOnlyList<'T> -> IReadOnlyList<'T> -> Change<'T> list =
+      fun oldItems newItems ->
+        match Diff.keyed keyOf oldItems newItems with
+        | Ok changes -> changes
+        | Error duplicates ->
+          let describe (keys: 'K list) =
+            if List.isEmpty keys then
+              "none"
+            else
+              keys |> List.map string |> String.concat ", "
+
+          invalidArg
+            "keyOf"
+            $"Item keys must be unique within a snapshot. Repeated old keys: {describe duplicates.Old}. Repeated new keys: {describe duplicates.New}."
+
+    /// Bind an observable of item snapshots to the control's ItemsSource.
+    /// ItemsSource is assigned once; each snapshot applies as minimal
+    /// insert, remove, replace, and move deltas on an owned collection, so
+    /// item containers and selection survive edits. Items are matched by
+    /// keyOf; keys must be unique within a snapshot. Emissions must arrive
+    /// on the UI thread; Program dispatch guarantees this for model
+    /// streams.
+    ///
+    /// A snapshot that repeats a key throws ArgumentException. Bound
+    /// inside a Program view, the throw surfaces through the program's
+    /// OnError handler.
+    ///
+    /// F# model lists qualify as snapshots; upcast the observable once:
+    /// Observable.map (fun m -> m.Items :> IReadOnlyList<Item>) model.
+    [<Extension>]
+    let BindItemsSource<'T, 'K when 'T: equality and 'K: equality>
+      (
+        this: ItemsControl,
+        source: IObservable<IReadOnlyList<'T>>,
+        keyOf: 'T -> 'K
+      ) : IDisposable =
+      bindItems this source (keyedCompute keyOf)
+
+    /// Bind an observable of item snapshots to the control's ItemsSource
+    /// using structural equality, without keys. Prefer the keyed overload:
+    /// it also matches moved items. Emissions must arrive on the UI thread.
+    [<Extension>]
+    let BindItemsSourceStructural<'T when 'T: equality>
+      (this: ItemsControl, source: IObservable<IReadOnlyList<'T>>)
+      : IDisposable =
+      bindItems this source Diff.structural
+
+  /// C#-friendly wrappers around the collection bindings. The overloads
+  /// that take F# lists upcast each snapshot internally, so model lists
+  /// bind without a manual conversion.
+  [<Extension>]
+  type CollectionExtensions =
+
+    /// Bind an observable of item snapshots, matching items by key.
+    [<Extension>]
+    static member BindItemsSource<'T, 'K when 'T: equality and 'K: equality>
+      (
+        this: ItemsControl,
+        source: IObservable<IReadOnlyList<'T>>,
+        keyOf: Func<'T, 'K>
+      ) : IDisposable =
+      Extensions.bindItems this source (Extensions.keyedCompute keyOf.Invoke)
+
+    /// Bind an observable of F# list snapshots, matching items by key.
+    [<Extension>]
+    static member BindItemsSource<'T, 'K when 'T: equality and 'K: equality>
+      (this: ItemsControl, source: IObservable<'T list>, keyOf: Func<'T, 'K>)
+      : IDisposable =
+      let snapshots =
+        Observable.map (fun items -> items :> IReadOnlyList<'T>) source
+
+      Extensions.bindItems this snapshots (Extensions.keyedCompute keyOf.Invoke)
+
+    /// Bind an observable of item snapshots using structural equality.
+    [<Extension>]
+    static member BindItemsSource<'T when 'T: equality>
+      (this: ItemsControl, source: IObservable<IReadOnlyList<'T>>)
+      : IDisposable =
+      Extensions.bindItems this source Diff.structural
+
+    /// Bind an observable of F# list snapshots using structural equality.
+    [<Extension>]
+    static member BindItemsSource<'T when 'T: equality>
+      (this: ItemsControl, source: IObservable<'T list>)
+      : IDisposable =
+      let snapshots =
+        Observable.map (fun items -> items :> IReadOnlyList<'T>) source
+
+      Extensions.bindItems this snapshots Diff.structural
