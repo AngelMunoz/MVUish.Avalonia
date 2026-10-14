@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>MVUish.Avalonia.Templates</id>
+    <version>0.1.0</version>
+    <title>MVUish.Avalonia project templates</title>
+    <authors>Angel D. Munoz</authors>
+    <description>dotnet new project templates for MVUish.Avalonia apps in F# and C#.</description>
+    <language>en-US</language>
+    <packageTypes>
+      <packageType name="Template" />
+    </packageTypes>
+  </metadata>
+  <files>
+    <file
+      src="mvu-fsharp\**\*.*"
+      target="content\mvu-fsharp"
+      exclude="mvu-fsharp\bin\**\*.*;mvu-fsharp\obj\**\*.*"
+    />
+    <file
+      src="mvu-csharp\**\*.*"
+      target="content\mvu-csharp"
+      exclude="mvu-csharp\bin\**\*.*;mvu-csharp\obj\**\*.*"
+    />
+  </files>
+</package>

@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Angel D. Munoz",
+  "classifications": ["Avalonia", "MVU", "Desktop"],
+  "identity": "MVUish.Avalonia.CSharp",
+  "name": "MVUish.Avalonia C# App",
+  "shortName": "mvu-csharp",
+  "sourceName": "MvuApp",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  }
+}
