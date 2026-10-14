@@ -156,16 +156,17 @@ module Cmd =
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module Sub =
   let none: Sub<'Msg> =
-    fun _ ->
-      { new IDisposable with
-          member _.Dispose() = ()
-      }
+    fun _ -> {
+      new IDisposable with
+        member _.Dispose() = ()
+    }
 
   let inline batch (subs: seq<Sub<'Msg>>) : Sub<'Msg> =
     fun dispatch ->
       let disposables = subs |> Seq.map(fun s -> s dispatch) |> Seq.toArray
 
-      { new IDisposable with
+      {
+        new IDisposable with
           member _.Dispose() =
             for d in disposables do
               d.Dispose()
@@ -190,7 +191,8 @@ module Sub =
       let handler = EventHandler<'EventArgs>(fun _ args -> dispatch(map args))
       addHandler handler
 
-      { new IDisposable with
+      {
+        new IDisposable with
           member _.Dispose() = removeHandler handler
       }
 
@@ -206,7 +208,8 @@ module Sub =
       timer.AutoReset <- true
       timer.Start()
 
-      { new IDisposable with
+      {
+        new IDisposable with
           member _.Dispose() =
             timer.Stop()
             timer.Dispose()
@@ -223,14 +226,13 @@ module Program =
     (init: 'Arg -> 'Model * Cmd<'Msg>)
     (update: 'Msg -> 'Model -> 'Model * Cmd<'Msg>)
     (view: IObservable<'Model> -> Dispatch<'Msg> -> 'View)
-    =
-    {
-      Init = init
-      Update = update
-      View = view
-      Subscribe = fun _ -> Sub.none
-      OnError = fun (msg, ex) -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex
-    }
+    = {
+    Init = init
+    Update = update
+    View = view
+    Subscribe = fun _ -> Sub.none
+    OnError = fun (msg, ex) -> printfn "Avalonia.Mvu Error: %s\n%O" msg ex
+  }
 
   let mkSimple
     (init: 'Arg -> 'Model)
@@ -245,8 +247,7 @@ module Program =
   let withSubscription
     (subscribe: 'Model -> Sub<'Msg>)
     (program: Program<'Arg, 'Model, 'Msg, 'View>)
-    =
-    { program with Subscribe = subscribe }
+    = { program with Subscribe = subscribe }
 
   let withConsoleTrace (program: Program<'Arg, 'Model, 'Msg, 'View>) =
     let tracedUpdate msg model =
@@ -260,8 +261,7 @@ module Program =
   let withErrorHandler
     (onError: string * exn -> unit)
     (program: Program<'Arg, 'Model, 'Msg, 'View>)
-    =
-    { program with OnError = onError }
+    = { program with OnError = onError }
 
   let runWith (arg: 'Arg) (program: Program<'Arg, 'Model, 'Msg, 'View>) =
     let initModel, initCmd = program.Init arg
@@ -330,8 +330,7 @@ module Extensions =
       property: AvaloniaProperty<'T>,
       source: IObservable<'T>
     ) =
-    let binding = source.ToBinding()
-    this[property] <- binding
+    this.Bind(property, source) |> ignore
     this
 
 // -----------------------------------------------------------
@@ -450,7 +449,8 @@ module CSharp =
 
             addHandler.Invoke(handler)
 
-            { new IDisposable with
+            {
+              new IDisposable with
                 member _.Dispose() = removeHandler.Invoke(handler)
             }
 
@@ -469,7 +469,8 @@ module CSharp =
             timer.AutoReset <- true
             timer.Start()
 
-            { new IDisposable with
+            {
+              new IDisposable with
                 member _.Dispose() =
                   timer.Stop()
                   timer.Dispose()
@@ -493,11 +494,10 @@ module CSharp =
 
     let mutable _subscribe: Func<'Model, Func<Action<'Msg>, IDisposable>> =
       Func<_, _>(fun _ ->
-        Func<_, _>(fun _ ->
-          { new IDisposable with
-              member _.Dispose() = ()
-          }
-        )
+        Func<_, _>(fun _ -> {
+          new IDisposable with
+            member _.Dispose() = ()
+        })
       )
 
     let mutable _trace = false

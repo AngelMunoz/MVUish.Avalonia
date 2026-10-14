@@ -477,3 +477,6 @@ $RECYCLE.BIN/
 *.lnk
 
 .idea/
+
+# Agent session artifacts
+.zcode/

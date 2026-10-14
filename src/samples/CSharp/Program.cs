@@ -1,15 +1,13 @@
 using CSharp;
 
 
-Window View()
-{
-  Window(out var window)
-    .Title("NXUI + Avalonia.MVU")
-    .Width(300)
-    .Height(300)
-    .Content(MainView.Build(window));
-  return window;
-}
+Window View() =>
+    Window()
+        .Title("NXUI + Avalonia.MVU")
+        .Width(300)
+        .Height(300)
+        .Content(MainView.Build())
+        .Mount();
 
 
 AppBuilder

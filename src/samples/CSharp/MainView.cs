@@ -9,6 +9,7 @@ using Avalonia.Data;
 using System.Reactive.Linq;
 using static Avalonia.Mvu.CSharp;
 using NXUI.Extensions;
+using NXUI.HotReload.Nodes;
 
 public static class MainView
 {
@@ -27,7 +28,7 @@ public static class MainView
     public sealed record Rename(string NewTitle) : Msg;
   }
 
-  public static Control Build(Window _)
+  public static ElementBuilder<DockPanel> Build()
   {
     // INIT
     (Model, Action<Action<Msg>, Action<string, Exception>>) Init()
@@ -84,7 +85,7 @@ public static class MainView
     }
 
     // VIEW
-    Control View(IObservable<Model> model, Action<Msg> dispatch)
+    ElementBuilder<DockPanel> View(IObservable<Model> model, Action<Msg> dispatch)
     {
       // Lens
       var clockObs = model.Select(m => m.Clock);
@@ -94,7 +95,7 @@ public static class MainView
       void dispatchClock(ClockModule.Msg m) => dispatch(new Msg.Clock(m));
       void dispatchMetrics(MetricsModule.Msg m) => dispatch(new Msg.Metrics(m));
 
-      return DockPanel()
+      var root = DockPanel()
           .LastChildFill(true)
           .Children(
               TextBlock()
@@ -120,14 +121,17 @@ public static class MainView
                           .Spacing(5)
                           .Children(
                               Label().Content("Dashboard Settings").Foreground(Brushes.LightGray),
-                              TextBox()
+                              TextBox(out var titleBox)
                                   .Text(model.Select(m => m.Title))
-                                  .OnText((_, obs) =>
-                                      obs.Subscribe(t => dispatch(new Msg.Rename(t)))
-                                  )
                           )
                   )
           );
+
+      titleBox.ObserveText().Subscribe(t =>
+          dispatch(new Msg.Rename(t ?? string.Empty))
+      );
+
+      return root;
     }
 
     return Program.MkProgram(
