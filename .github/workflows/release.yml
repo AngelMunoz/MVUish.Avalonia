@@ -14,6 +14,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
       - name: Get Package Version
         id: version
         run: |
@@ -43,28 +48,27 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Setup .NET
-        if: steps.check_tag.outputs.exists == 'false'
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.x
-
       - name: Restore dependencies
         if: steps.check_tag.outputs.exists == 'false'
         run: dotnet restore MVUish.Avalonia.slnx
 
+      - name: Build
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet build MVUish.Avalonia.slnx --configuration Release --no-restore
+
       - name: Run Tests
         if: steps.check_tag.outputs.exists == 'false'
-        run: dotnet test MVUish.Avalonia.slnx --configuration Release --no-restore
+        run: dotnet test MVUish.Avalonia.slnx --configuration Release --no-build --no-restore
 
-      # The library versions from its fsproj; the templates nuspec takes the
-      # same version through the $version$ token.
+      # The Version property of MVUish.Avalonia.fsproj is the source of truth.
+      # Both packs pin that same version so the packages match the release tag.
       - name: Pack
         if: steps.check_tag.outputs.exists == 'false'
         run: |
-          dotnet pack src/MVUish.Avalonia/MVUish.Avalonia.fsproj --configuration Release --no-build --output nupkgs
+          dotnet pack src/MVUish.Avalonia/MVUish.Avalonia.fsproj --configuration Release --no-build \
+            -p:Version=${{ steps.version.outputs.version }} \
+            --output nupkgs
           dotnet pack templates/MVUish.Avalonia.Templates.csproj --configuration Release \
-            -p:PackageVersion=${{ steps.version.outputs.version }} \
             -p:NuspecProperties=version=${{ steps.version.outputs.version }} \
             --output nupkgs
 
