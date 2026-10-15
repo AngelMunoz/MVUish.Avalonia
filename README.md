@@ -26,6 +26,8 @@ Requires **.NET 10** and **Avalonia 12**. The samples and templates also use [NX
 
 This library provides a unified API for both C# and F# developers, treating both as first-class citizens.
 
+Documentation is published at [angelmunoz.github.io/MVUish.Avalonia](https://angelmunoz.github.io/MVUish.Avalonia/).
+
 ### C# Example
 
 We provide a specialized `MVUish.Avalonia.CSharp` module to hide F# specifics and provide a familiar, idiomatic C# API.

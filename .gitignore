@@ -478,5 +478,9 @@ $RECYCLE.BIN/
 
 .idea/
 
+# FsDocs output
+output/
+.fsdocs/
+
 # Agent session artifacts
 .zcode/
