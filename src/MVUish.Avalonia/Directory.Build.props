@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <Copyright>Copyright 2026 Angel D. Munoz.</Copyright>
+    <Authors>Angel Munoz and contributors</Authors>
+    <Description>Model-Update-Observable (reactive MVU) bindings for Avalonia. Views run once and bind control properties directly to the model stream, for C# and F#.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryType>git</RepositoryType>
+    <ProjectUrl>https://github.com/AngelMunoz/MVUish.Avalonia</ProjectUrl>
+    <RepositoryUrl>https://github.com/AngelMunoz/MVUish.Avalonia.git</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <ChangelogFile>$(MSBuildThisFileDirectory)../../CHANGELOG.md</ChangelogFile>
+    <FsDocsReleaseNotesLink>https://github.com/AngelMunoz/MVUish.Avalonia/blob/main/CHANGELOG.md</FsDocsReleaseNotesLink>
+    <FsDocsLicenseLink>https://github.com/AngelMunoz/MVUish.Avalonia/blob/main/LICENSE</FsDocsLicenseLink>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\..\LICENSE" Pack="true" PackagePath="\" />
+    <None Include="$(MSBuildThisFileDirectory)..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+</Project>
