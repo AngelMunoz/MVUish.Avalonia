@@ -167,7 +167,7 @@ dotnet new mvu-fsharp -o MyApp
 dotnet new mvu-csharp -o MyApp
 ```
 
-Each template generates a minimal clock app wired with this library and NXUI. The generated app references the library as a source project; swap that reference for a `PackageReference` when you consume a published build.
+Each template generates a minimal clock app wired with this library and NXUI. Generated apps reference the published `MVUish.Avalonia` package (`1.*`); inside this repository the template projects build against the library source instead, through `templates/Directory.Build.props`.
 
 ## Existing Alternatives
 

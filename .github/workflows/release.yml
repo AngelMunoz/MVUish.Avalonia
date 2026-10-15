@@ -1,0 +1,90 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get Package Version
+        id: version
+        run: |
+          VERSION=$(dotnet msbuild src/MVUish.Avalonia/MVUish.Avalonia.fsproj -getProperty:Version)
+
+          if [ -z "$VERSION" ]; then
+            echo "No Version property in MVUish.Avalonia.fsproj"
+            exit 1
+          fi
+
+          echo "Found version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          if echo "$VERSION" | grep -qiE '(alpha|beta|rc)'; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if Tag Exists
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.version.outputs.version }} already exists."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup .NET
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore dependencies
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet restore MVUish.Avalonia.slnx
+
+      - name: Run Tests
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet test MVUish.Avalonia.slnx --configuration Release --no-restore
+
+      # The library versions from its fsproj; the templates nuspec takes the
+      # same version through the $version$ token.
+      - name: Pack
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          dotnet pack src/MVUish.Avalonia/MVUish.Avalonia.fsproj --configuration Release --no-build --output nupkgs
+          dotnet pack templates/MVUish.Avalonia.Templates.csproj --configuration Release \
+            -p:PackageVersion=${{ steps.version.outputs.version }} \
+            -p:NuspecProperties=version=${{ steps.version.outputs.version }} \
+            --output nupkgs
+
+      - name: NuGet login (trusted publishing)
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: NuGet/login@v1
+        id: nuget_login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to NuGet
+        if: steps.check_tag.outputs.exists == 'false'
+        run: dotnet nuget push "nupkgs/*.nupkg" --api-key ${{ steps.nuget_login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Create Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          files: nupkgs/*.nupkg

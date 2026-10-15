@@ -2,7 +2,7 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
   <metadata>
     <id>MVUish.Avalonia.Templates</id>
-    <version>0.1.0</version>
+    <version>$version$</version>
     <title>MVUish.Avalonia project templates</title>
     <authors>Angel D. Munoz</authors>
     <description>dotnet new project templates for MVUish.Avalonia apps in F# and C#.</description>
