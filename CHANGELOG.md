@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-16
+
 ### Fixed
 
 - `BindItemsSource` no longer disposes its subscription when the control detaches from the visual tree. Detach disposal froze detached-but-alive controls (for example views kept in a navigation cache) at their last snapshot; they now keep updating, matching how Avalonia's own observable bindings behave. To stop an abandoned binding from processing snapshots forever, the observer holds the control through a weak reference and ends the subscription on the first emission after the control is collected.
