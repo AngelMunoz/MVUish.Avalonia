@@ -5,6 +5,7 @@ open System.Collections.Generic
 open System.Collections.ObjectModel
 open System.Collections.Specialized
 open System.Reactive.Subjects
+open System.Runtime.CompilerServices
 open System.Threading
 open Avalonia
 open Avalonia.Controls
@@ -180,7 +181,17 @@ let ``F# list snapshots bind without a manual cast`` () =
   )
 
 [<Fact>]
-let ``detaching from the visual tree stops applying emissions`` () =
+let ``collection bindings return their control for chaining`` () =
+  onUi(fun () ->
+    let source = new Subject<IReadOnlyList<Note>>()
+    let bound = ListBox().BindItemsSource(source, (fun n -> n.Id))
+
+    source.OnNext(notes [ 1 ])
+    Assert.Equal(1, bound.ItemCount)
+  )
+
+[<Fact>]
+let ``detached controls keep applying emissions`` () =
   onUi(fun () ->
     let list = ListBox()
     let source = boundNotes list
@@ -193,5 +204,30 @@ let ``detaching from the visual tree stops applying emissions`` () =
     source.OnNext(notes [ 1; 2 ])
 
     let collection = itemsOf list
-    Assert.Equal(1, collection.Count)
+    Assert.Equal(2, collection.Count)
+  )
+
+// The binding API itself keeps no disposable, so this is the abandonment
+// path every caller gets. NoInlining makes the frame holding the control
+// pop on return; a nested let in the test method stays alive until the
+// test returns under the Debug JIT.
+[<MethodImpl(MethodImplOptions.NoInlining)>]
+let private abandonedBinding (source: Subject<IReadOnlyList<Note>>) =
+  let list = ListBox()
+  list.BindItemsSource(source, (fun n -> n.Id)) |> ignore
+  WeakReference<ListBox>(list)
+
+[<Fact>]
+let ``a collected control ends its binding on the next emission`` () =
+  onUi(fun () ->
+    let source = new Subject<IReadOnlyList<Note>>()
+    let weak = abandonedBinding source
+
+    for _ in 1..2 do
+      GC.Collect(2, GCCollectionMode.Forced, true)
+      GC.WaitForPendingFinalizers()
+
+    Assert.False(fst(weak.TryGetTarget()))
+
+    source.OnNext(notes [ 1; 2 ])
   )
