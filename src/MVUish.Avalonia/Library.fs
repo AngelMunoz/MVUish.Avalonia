@@ -820,14 +820,29 @@ module Collections =
       let mutable current: IReadOnlyList<'T> =
         Array.empty<'T> :> IReadOnlyList<'T>
 
+      // The observer must not hold the control strongly: sources are
+      // usually long-lived stores, so a strong edge would root the control
+      // for as long as the source emits. Holding it weakly lets an
+      // abandoned binding end itself once the control is collected, while
+      // a detached but alive control keeps updating, like any other
+      // Avalonia binding.
+      let weak = WeakReference<ItemsControl>(control)
+
+      // No-op until the real subscription exists, in case a hot source
+      // emits synchronously during subscribe.
+      let mutable subscription: IDisposable = {
+        new IDisposable with
+          member _.Dispose() = ()
+      }
+
       let handle items =
-        compute current items |> Diff.apply collection
-        current <- items
+        match weak.TryGetTarget() with
+        | true, _ ->
+          compute current items |> Diff.apply collection
+          current <- items
+        | false, _ -> subscription.Dispose()
 
-      let subscription = Observable.subscribe handle source
-
-      control.DetachedFromVisualTree.Add(fun _ -> subscription.Dispose())
-
+      subscription <- Observable.subscribe handle source
       subscription
 
     let internal keyedCompute
@@ -855,6 +870,12 @@ module Collections =
     /// on the UI thread; Program dispatch guarantees this for model
     /// streams.
     ///
+    /// Returns the control, so the call chains in NXUI-style builders.
+    /// Like BindStream, the binding needs no disposal: it keeps applying
+    /// snapshots while the control is alive — including while detached
+    /// from the visual tree — and ends itself on the first emission after
+    /// the control is collected.
+    ///
     /// A snapshot that repeats a key throws ArgumentException. Bound
     /// inside a Program view, the throw surfaces through the program's
     /// OnError handler.
@@ -867,21 +888,26 @@ module Collections =
         this: ItemsControl,
         source: IObservable<IReadOnlyList<'T>>,
         keyOf: 'T -> 'K
-      ) : IDisposable =
-      bindItems this source (keyedCompute keyOf)
+      ) : ItemsControl =
+      bindItems this source (keyedCompute keyOf) |> ignore
+      this
 
     /// Bind an observable of item snapshots to the control's ItemsSource
     /// using structural equality, without keys. Prefer the keyed overload:
-    /// it also matches moved items. Emissions must arrive on the UI thread.
+    /// it also matches moved items. Emissions must arrive on the UI
+    /// thread. Returns the control, for chaining; like BindStream, the
+    /// binding needs no disposal and ends once the control is collected.
     [<Extension>]
     let BindItemsSourceStructural<'T when 'T: equality>
       (this: ItemsControl, source: IObservable<IReadOnlyList<'T>>)
-      : IDisposable =
-      bindItems this source Diff.structural
+      : ItemsControl =
+      bindItems this source Diff.structural |> ignore
+      this
 
   /// C#-friendly wrappers around the collection bindings. The overloads
   /// that take F# lists upcast each snapshot internally, so model lists
-  /// bind without a manual conversion.
+  /// bind without a manual conversion. Like the F# extensions, they
+  /// return the control for chaining and need no disposal.
   [<Extension>]
   type CollectionExtensions =
 
@@ -892,32 +918,40 @@ module Collections =
         this: ItemsControl,
         source: IObservable<IReadOnlyList<'T>>,
         keyOf: Func<'T, 'K>
-      ) : IDisposable =
+      ) : ItemsControl =
       Extensions.bindItems this source (Extensions.keyedCompute keyOf.Invoke)
+      |> ignore
+
+      this
 
     /// Bind an observable of F# list snapshots, matching items by key.
     [<Extension>]
     static member BindItemsSource<'T, 'K when 'T: equality and 'K: equality>
       (this: ItemsControl, source: IObservable<'T list>, keyOf: Func<'T, 'K>)
-      : IDisposable =
+      : ItemsControl =
       let snapshots =
         Observable.map (fun items -> items :> IReadOnlyList<'T>) source
 
       Extensions.bindItems this snapshots (Extensions.keyedCompute keyOf.Invoke)
+      |> ignore
+
+      this
 
     /// Bind an observable of item snapshots using structural equality.
     [<Extension>]
     static member BindItemsSource<'T when 'T: equality>
       (this: ItemsControl, source: IObservable<IReadOnlyList<'T>>)
-      : IDisposable =
-      Extensions.bindItems this source Diff.structural
+      : ItemsControl =
+      Extensions.bindItems this source Diff.structural |> ignore
+      this
 
     /// Bind an observable of F# list snapshots using structural equality.
     [<Extension>]
     static member BindItemsSource<'T when 'T: equality>
       (this: ItemsControl, source: IObservable<'T list>)
-      : IDisposable =
+      : ItemsControl =
       let snapshots =
         Observable.map (fun items -> items :> IReadOnlyList<'T>) source
 
-      Extensions.bindItems this snapshots Diff.structural
+      Extensions.bindItems this snapshots Diff.structural |> ignore
+      this

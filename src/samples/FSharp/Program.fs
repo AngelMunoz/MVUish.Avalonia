@@ -202,11 +202,14 @@ module Notes =
         false
       )
 
+    // The list-typed overload accepts IObservable<Note list> directly and
+    // returns the control, so it chains with the NXUI builders.
     let listBox =
-      ListBox().ItemTemplate(rowTemplate).MinHeight(160.0).MaxHeight(200.0)
-
-    // The list-typed overload accepts IObservable<Note list> directly.
-    listBox.BindItemsSource(notes, (fun n -> n.Id)) |> ignore
+      ListBox()
+        .ItemTemplate(rowTemplate)
+        .MinHeight(160.0)
+        .MaxHeight(200.0)
+        .BindItemsSource(notes, (fun n -> n.Id))
 
     let mutable draft = ""
 

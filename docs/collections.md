@@ -9,7 +9,7 @@ category: Documentation
 
 Assigning a new list to `ItemsSource` on every model change rebuilds every item container: selection, scroll position, and any state a row holds are lost. The MVUish.Avalonia collection bindings instead keep one owned `ObservableCollection` as `ItemsSource` and apply each snapshot from the model as minimal deltas, so containers are reused.
 
-Both bindings return `IDisposable`, assign `ItemsSource` once, and unsubscribe when the control detaches from the visual tree.
+Both bindings assign `ItemsSource` once and return the control, so they chain in NXUI-style builders like the rest of the library. There is no disposable to manage: a binding keeps applying snapshots while its control is alive — including while detached from the visual tree — and ends itself on the first emission after the control is collected.
 
 ## Keyed binding (preferred)
 
@@ -26,19 +26,18 @@ type Note = { Id: Guid; Text: string }
 
 let view (model: IObservable<Model>) (dispatch: Dispatch<Msg>) =
   let notes = model |> Observable.map (fun m -> m.Notes)
-  let listBox = ListBox().MinHeight(160.0)
 
-  // The list-typed overload accepts IObservable<Note list> directly.
-  listBox.BindItemsSource(notes, (fun n -> n.Id)) |> ignore
-
-  listBox
+  // The list-typed overload accepts IObservable<Note list> directly and
+  // returns the control, so it chains with the NXUI builders.
+  ListBox().MinHeight(160.0).BindItemsSource(notes, (fun n -> n.Id))
 ```
 
 ```csharp
 using MVUish.Avalonia.Collections;
 
-var listBox = new ListBox { MinHeight = 160 };
-CollectionExtensions.BindItemsSource(listBox, model.Select(m => m.Notes), n => n.Id);
+// Returns the list box, so the call chains in NXUI-style builders.
+var listBox = CollectionExtensions.BindItemsSource(
+    new ListBox { MinHeight = 160 }, model.Select(m => m.Notes), n => n.Id);
 ```
 
 A snapshot that repeats a key throws `ArgumentException`. Inside a `Program` view the throw surfaces through the program's `OnError` handler instead of crashing the app.
