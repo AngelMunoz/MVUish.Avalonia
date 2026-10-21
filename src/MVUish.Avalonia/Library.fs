@@ -789,7 +789,9 @@ module Program =
     // Runs on the UI thread for every accepted message.
     let processMsg (msg: 'Msg) =
       try
-        if toTerminate msg then
+        if stopped then
+          ()
+        elif toTerminate msg then
           teardown true
         else
           let current = state.Value

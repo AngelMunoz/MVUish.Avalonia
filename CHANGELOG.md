@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-10-20
+## [2.0.0] - 2026-10-21
 
 ### Added
 
@@ -25,6 +25,10 @@
 - The loop now renders before reconciling subscriptions and runs the init command after both (Elmish's order), instead of running the init command before the view and subscriptions exist.
 - A failing view factory reports to `OnError` and yields the default view instead of throwing out of `runWithLifecycle`.
 - Templates reference package version `2.*`.
+
+### Fixed
+
+- Disposing a program no longer reports a spurious `ObjectDisposedException` to `OnError` when a message is still queued in the update loop. Messages accepted before the stop are dropped silently.
 
 ## [1.0.1] - 2026-10-16
 

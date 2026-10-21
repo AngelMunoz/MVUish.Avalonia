@@ -764,3 +764,26 @@ let viewFactoryFailureReportsErrorInsteadOfCrashing () : Task = task {
 
   Assert.True result
 }
+
+[<Fact>]
+let disposeDropsMessagesQueuedBeforeItWithoutReportingAnError () : Task = task {
+  let! result =
+    onUi(fun () -> task {
+      let errors = ConcurrentQueue<string>()
+      let h = Harness<int, unit>()
+
+      let program =
+        Program.mkSimple (fun () -> 0) (fun _ n -> n + 1) h.View
+        |> Program.withErrorHandler(fun (ctx, _) -> errors.Enqueue ctx)
+
+      let _, lifetime = Program.runWithLifecycle () program
+
+      h.Dispatch()
+      lifetime.Dispose()
+      do! Task.Delay 200
+
+      return errors.IsEmpty && h.Model = 0
+    })
+
+  Assert.True result
+}
