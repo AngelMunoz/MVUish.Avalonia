@@ -358,6 +358,9 @@ let subscriptionsFollowTheModel () : Task = task {
 
       h.Dispatch ToggleRunning
       let! stopped = waitFor 2000 (fun () -> stops.Value = 1)
+      // A tick dispatched just before the dispose can still be queued in
+      // the mailbox; let it land before freezing the observed value.
+      do! Task.Delay 100
       let frozenAt = h.Model.Count
       do! Task.Delay 150
 
@@ -557,6 +560,9 @@ let untilDetachedEndsSubscriptionsWhenControlLeavesTree () : Task = task {
 
       window.Content <- null
       let! stopped = waitFor 2000 (fun () -> stops.Value = 1)
+      // A tick dispatched just before the detach disposed the timer can
+      // still be queued in the mailbox; let it land.
+      do! Task.Delay 100
       let frozenAt = h.Model
       do! Task.Delay 150
 
@@ -593,6 +599,8 @@ let runWithLifetimeStopsProgramOnDetach () : Task = task {
 
       window.Content <- null
       let! detached = waitFor 2000 (fun () -> h.Completed)
+      // Let any tick queued before the dispose land before freezing.
+      do! Task.Delay 100
       let frozenAt = h.Model
       do! Task.Delay 150
 
