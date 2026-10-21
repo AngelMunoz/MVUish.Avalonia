@@ -149,6 +149,8 @@ var listBox = CollectionExtensions.BindItemsSource(
 
 A snapshot that repeats a key throws `ArgumentException`. Inside a `Program` view the throw surfaces through the program's `OnError` handler instead of crashing the app.
 
+> Containers are reused while they are realized. Once items scroll past the viewport, Avalonia's virtualizing panels recycle containers, so control-local row state cannot survive: a non-recycling template is rebuilt, and a recycling template is reused for another item. **A list that virtualizes and needs to keep row state must use a recycling template** (`supportsRecycling: true`) with the state on the model item; handlers must read the live `DataContext` rather than a captured item, and the row must rehydrate from it. A non-recycling template is only safe when the list cannot scroll. The sample shows the shape. See [Collections](docs/collections.md).
+
 > NXUI ships its own `BindItemsSource` extension that binds the raw `ItemsSource` property. In F#, open `MVUish.Avalonia.Collections` after `NXUI.Extensions` so shadowing picks this adapter, as shown above. In C#, call `CollectionExtensions` statically as shown above.
 
 ### Structural binding

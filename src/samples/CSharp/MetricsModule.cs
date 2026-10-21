@@ -30,16 +30,14 @@ public static class MetricsModule
     switch (msg)
     {
       case Msg.Generate:
-        Func<Task<Msg>> generator = async () =>
-        {
-          await Task.Delay(1000); // Simulate work
-          var rnd = new Random();
-          return new Msg.NewMetrics(rnd.Next(10, 100), rnd.Next(200, 8000));
-        };
-
         return (model, Command.PerformTask(
-            (Func<object?, Task<Msg>>)(_ => generator()),
-            null,
+            async (object? _) =>
+              {
+                await Task.Delay(1000); // Simulate work
+                var rnd = new Random();
+                return new Msg.NewMetrics(rnd.Next(10, 100), rnd.Next(200, 8000));
+              },
+            default,
             res => res)
         );
 

@@ -73,13 +73,16 @@ module Cmd =
   /// Lift a raw effect that can also dispatch messages when it finishes.
   /// The effect owns its own error handling; exceptions it throws are not
   /// caught.
-  let inline ofEffect (effect: Dispatch<'Msg> -> unit) : Cmd<'Msg> =
+  let inline ofEffect
+    ([<InlineIfLambda>] effect: Dispatch<'Msg> -> unit)
+    : Cmd<'Msg> =
     fun dispatch _ -> effect dispatch
 
   /// Run a plain action as a command, for view-side interactions such as
   /// clearing a text box from update. The action owns its own error
   /// handling; exceptions it throws are not caught.
-  let inline ofAction (action: unit -> unit) : Cmd<'Msg> = fun _ _ -> action()
+  let inline ofAction ([<InlineIfLambda>] action: unit -> unit) : Cmd<'Msg> =
+    fun _ _ -> action()
 
   let inline map
     ([<InlineIfLambda>] mapping: 'A -> 'Msg)
