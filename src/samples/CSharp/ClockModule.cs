@@ -6,6 +6,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
+using Mvu = MVUish.Avalonia;
 using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
 using NXUI.HotReload.Nodes;
@@ -30,11 +31,9 @@ public static class ClockModule
     _ => (model, Command.None<Msg>())
   };
 
-  public static Func<Action<Msg>, IDisposable> Subscribe(Model _) =>
-      Subscription.Interval<Msg>(
-          TimeSpan.FromSeconds(1),
-          () => new Msg.Tick(DateTime.Now)
-      );
+  public const string SubId = "clock";
+
+  public static TimeSpan SubInterval => TimeSpan.FromSeconds(1);
 
   public static ElementBuilder<Border> View(IObservable<Model> model, Action<Msg> _)
   {

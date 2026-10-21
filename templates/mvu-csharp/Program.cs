@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Mvu = MVUish.Avalonia;
 using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
 using NXUI.HotReload.Nodes;
@@ -38,8 +39,8 @@ AppBuilder
         _ => (model, Command.None<Msg>())
     };
 
-Func<Action<Msg>, IDisposable> Subscribe(Model _) =>
-    Subscription.Interval(TimeSpan.FromSeconds(1), () => new Msg.Tick(DateTime.Now));
+CSub<Msg> Subscribe(Model _) =>
+    Subscription.Interval("clock", TimeSpan.FromSeconds(1), () => new Msg.Tick(DateTime.Now));
 
 ElementBuilder<Border> View(IObservable<Model> model, Action<Msg> _)
 {

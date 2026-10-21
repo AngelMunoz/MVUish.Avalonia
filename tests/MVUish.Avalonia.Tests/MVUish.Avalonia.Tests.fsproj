@@ -6,8 +6,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="TestSession.fs" />
     <Compile Include="DiffTests.fs" />
     <Compile Include="AdapterTests.fs" />
+    <Compile Include="ProgramTests.fs" />
   </ItemGroup>
 
   <ItemGroup>

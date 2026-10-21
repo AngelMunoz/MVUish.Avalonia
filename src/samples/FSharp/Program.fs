@@ -29,7 +29,10 @@ module Clock =
   let update (Tick time) _ = time, Cmd.none
 
   let subscribe _ =
-    Sub.interval (TimeSpan.FromSeconds(1.0)) (fun () -> Tick DateTime.Now)
+    Sub.interval
+      "clock"
+      (TimeSpan.FromSeconds(1.0))
+      (fun () -> Tick DateTime.Now)
 
   let view (model: IObservable<Model>) (_: Dispatch<Msg>) =
     let timeStr = model |> Observable.map(fun t -> t.ToString "HH:mm:ss")
@@ -304,7 +307,7 @@ module Dashboard =
   // SUBSCRIPTION COMPOSITION
   let subscribe model =
     Sub.batch [
-      Clock.subscribe model.Clock |> Sub.map ClockMsg
+      Clock.subscribe model.Clock |> Sub.map "clock" ClockMsg
     // Metrics doesn't have a subscription, it uses Cmd loop, but we could add one here if needed
     ]
 

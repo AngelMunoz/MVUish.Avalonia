@@ -19,7 +19,10 @@ module Clock =
   let update (Tick time) _ = time, Cmd.none
 
   let subscribe _ =
-    Sub.interval (TimeSpan.FromSeconds 1.0) (fun () -> Tick DateTime.Now)
+    Sub.interval
+      "clock"
+      (TimeSpan.FromSeconds 1.0)
+      (fun () -> Tick DateTime.Now)
 
   let view (model: IObservable<Model>) (_: Dispatch<Msg>) =
     let time = model |> Observable.map(fun t -> t.ToString "HH:mm:ss")
