@@ -12,6 +12,7 @@ open Avalonia.Controls
 open Avalonia.Headless
 open MVUish.Avalonia.Collections
 open MVUish.Avalonia.Tests.DiffTests
+open MVUish.Avalonia.Tests.TestSession
 open Xunit
 
 // NotifyCollectionChangedAction cases are not plain F# identifiers.
@@ -19,15 +20,12 @@ let private added = NotifyCollectionChangedAction.Add
 let private replaced = NotifyCollectionChangedAction.Replace
 let private reset = NotifyCollectionChangedAction.Reset
 
-type TestApp() =
-  inherit Application()
-
-// One headless session serves every test. Each Dispatch call runs its body
-// on the session's UI thread with Avalonia services installed.
-let private session = HeadlessUnitTestSession.StartNew(typeof<TestApp>)
-
-let private onUi (test: unit -> unit) =
-  session.Dispatch(Action test, CancellationToken.None).GetAwaiter().GetResult()
+// One headless session (TestSession.fs) serves every test. Each Dispatch
+// call runs its body on the session's UI thread with Avalonia services
+// installed. Tests return the task so the runner awaits instead of
+// blocking over sync.
+let private onUi (test: unit -> unit) : Tasks.Task =
+  TestSession.Session.Dispatch(Action test, CancellationToken.None)
 
 /// Record every collection-changed action the ItemsSource emits.
 let private recorder (collection: ObservableCollection<'T>) =

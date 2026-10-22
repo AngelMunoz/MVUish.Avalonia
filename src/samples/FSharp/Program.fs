@@ -29,7 +29,10 @@ module Clock =
   let update (Tick time) _ = time, Cmd.none
 
   let subscribe _ =
-    Sub.interval (TimeSpan.FromSeconds(1.0)) (fun () -> Tick DateTime.Now)
+    Sub.interval
+      "clock"
+      (TimeSpan.FromSeconds(1.0))
+      (fun () -> Tick DateTime.Now)
 
   let view (model: IObservable<Model>) (_: Dispatch<Msg>) =
     let timeStr = model |> Observable.map(fun t -> t.ToString "HH:mm:ss")
@@ -137,7 +140,12 @@ module Metrics =
 // ============================================================================
 module Notes =
 
-  type Note = { Id: Guid; Text: string }
+  type Note = {
+    Id: Guid
+    Text: string
+    Checked: bool
+    RowText: string
+  }
 
   type Model = { Notes: Note list }
 
@@ -145,14 +153,24 @@ module Notes =
     | Add of string
     | Remove of Guid
     | Reverse
+    | SetChecked of Guid * bool
+    | SetRowText of Guid * string
 
   let init () =
-    let seed text = { Id = Guid.NewGuid(); Text = text }
+    let seed text = {
+      Id = Guid.NewGuid()
+      Text = text
+      Checked = false
+      RowText = ""
+    }
 
     {
       Notes = [ seed "First"; seed "Second"; seed "Third" ]
     },
     Cmd.none
+
+  let private replace id change =
+    List.map(fun n -> if n.Id = id then change n else n)
 
   let update msg model =
     match msg with
@@ -160,6 +178,8 @@ module Notes =
       let note = {
         Id = Guid.NewGuid()
         Text = text.Trim()
+        Checked = false
+        RowText = ""
       }
 
       { Notes = note :: model.Notes }, Cmd.none
@@ -174,32 +194,92 @@ module Notes =
 
     | Reverse -> { Notes = List.rev model.Notes }, Cmd.none
 
+    | SetChecked (id, checked') ->
+      { Notes = model.Notes |> replace id (fun n -> { n with Checked = checked' }) },
+      Cmd.none
+
+    | SetRowText (id, text) ->
+      { Notes = model.Notes |> replace id (fun n -> { n with RowText = text }) },
+      Cmd.none
+
   let view (model: IObservable<Model>) (dispatch: Dispatch<Msg>) =
     let notes = model |> Observable.map(fun m -> m.Notes)
     let count = model |> Observable.map(fun m -> $"{m.Notes.Length} notes")
 
-    // Each row owns state the model never sees: the checkbox and the text
-    // box. The keyed binding matches rows by Id and reuses containers, so
-    // that state travels with its note through adds, removes, and reorders.
+    // Rows are recyclable: the ListBox virtualizes, so Avalonia reuses a
+    // row's control tree for a different note while the list scrolls. The
+    // row keeps no state of its own; every control rehydrates from the note
+    // in its DataContext. Reflection bindings would do the same, but they
+    // need reflection, so this code-built view syncs explicitly and stays
+    // trimming/AOT friendly.
     let rowTemplate =
       FuncDataTemplate<Note>(
-        (fun note _ ->
-          StackPanel()
-            .Orientation(Orientation.Horizontal)
-            .Spacing(8.0)
-            .Children(
-              CheckBox(),
-              TextBlock()
-                .VerticalAlignment(VerticalAlignment.Center)
-                .Text(Binding(nameof note.Text)),
-              TextBox().Width(140.0).PlaceholderText("row state lives here"),
-              Button()
-                .Content("x")
-                .OnClickHandler(fun _ _ -> dispatch(Remove note.Id))
-            )
-          :> Control
+        (fun (note: Note) (_: INameScope) ->
+          let checkBox = CheckBox()
+          checkBox.IsChecked <- note.Checked
+
+          checkBox.IsCheckedChanged.Add(fun _ ->
+            match checkBox.DataContext with
+            | :? Note as current
+              when checkBox.IsChecked.GetValueOrDefault false <> current.Checked ->
+              dispatch(SetChecked(current.Id, checkBox.IsChecked.GetValueOrDefault false))
+            | _ -> ()
+          )
+
+          let textBlock = TextBlock()
+          textBlock.VerticalAlignment <- VerticalAlignment.Center
+          textBlock.Text <- note.Text
+
+          let textBox =
+            TextBox().Width(140.0).PlaceholderText("row state lives here")
+
+          textBox.Text <- note.RowText
+
+          // Commit on focus loss. Dispatching per keystroke races the async
+          // model update: the row is refreshed with the previous model value
+          // and the new character is overwritten.
+          textBox.LostFocus.Add(fun _ ->
+            match textBox.DataContext with
+            | :? Note as current when textBox.Text <> current.RowText ->
+              dispatch(SetRowText(current.Id, textBox.Text))
+            | _ -> ()
+          )
+
+          let remove = Button().Content("x")
+
+          remove.Click.Add(fun _ ->
+            match remove.DataContext with
+            | :? Note as current -> dispatch(Remove current.Id)
+            | _ -> ()
+          )
+
+          let row =
+            StackPanel()
+              .Orientation(Orientation.Horizontal)
+              .Spacing(8.0)
+              .Children(checkBox, textBlock, textBox, remove)
+
+          // Rehydrate the row when the container is recycled for another
+          // note. A new note instance for the same id (an update, e.g. a
+          // checkbox toggle) keeps the text box untouched, so text being
+          // typed is not overwritten by the committed model value.
+          let mutable syncedId = note.Id
+
+          row.DataContextChanged.Add(fun _ ->
+            match row.DataContext with
+            | :? Note as current ->
+              checkBox.IsChecked <- current.Checked
+              textBlock.Text <- current.Text
+
+              if current.Id <> syncedId then
+                textBox.Text <- current.RowText
+                syncedId <- current.Id
+            | _ -> ()
+          )
+
+          row :> Control
         ),
-        false
+        true
       )
 
     // The list-typed overload accepts IObservable<Note list> directly and
@@ -304,7 +384,7 @@ module Dashboard =
   // SUBSCRIPTION COMPOSITION
   let subscribe model =
     Sub.batch [
-      Clock.subscribe model.Clock |> Sub.map ClockMsg
+      Clock.subscribe model.Clock |> Sub.map "clock" ClockMsg
     // Metrics doesn't have a subscription, it uses Cmd loop, but we could add one here if needed
     ]
 

@@ -42,6 +42,62 @@ var listBox = CollectionExtensions.BindItemsSource(
 
 A snapshot that repeats a key throws `ArgumentException`. Inside a `Program` view the throw surfaces through the program's `OnError` handler instead of crashing the app.
 
+## Virtualization and row state
+
+**Rule: any list that virtualizes and needs to keep row state must use a template that supports recycling.** Pass `supportsRecycling: true` to `FuncDataTemplate<...>`, keep the state on the item (the model), and rehydrate the row controls from the live `DataContext`. A template that refuses recycling (`supportsRecycling: false`) is only safe when the list is guaranteed not to scroll, for example a short list with a non-virtualizing `ItemsPanel`.
+
+"Containers are reused" holds for containers that are realized. `ListBox` and friends virtualize by default: only the rows near the viewport are realized, and Avalonia recycles containers as the list scrolls. Two consequences:
+
+- **Control-local state cannot survive virtualization.** With a non-recycling template (`supportsRecycling: false`) Avalonia rebuilds the row content for each newly assigned container, so a ticked checkbox or typed text is lost. With a recycling template (`supportsRecycling: true`) it reuses the control tree for a different item, so the stale state would show on the wrong row.
+- **Row state that must survive scrolling belongs in the model.** Bind the row controls to model fields, and have handlers read the live `DataContext` instead of a captured item, so a recycled row rehydrates for the item it now shows.
+
+The recyclable shape (code-built rows):
+
+```fsharp
+let rowTemplate =
+  FuncDataTemplate<Note>(
+    (fun (note: Note) (_: INameScope) ->
+      let checkBox = CheckBox(IsChecked = note.Checked)
+      let textBox = TextBox(Text = note.RowText)
+
+      // Handlers dispatch against the live DataContext, never a captured item.
+      checkBox.IsCheckedChanged.Add(fun _ ->
+        match checkBox.DataContext with
+        | :? Note as current when checkBox.IsChecked.GetValueOrDefault false <> current.Checked ->
+          dispatch (SetChecked(current.Id, checkBox.IsChecked.GetValueOrDefault false))
+        | _ -> ())
+
+      // Commit text on focus loss. Dispatching per keystroke races the async
+      // model update: the row is rebuilt with the previous model value and the
+      // character being typed is overwritten.
+      textBox.LostFocus.Add(fun _ ->
+        match textBox.DataContext with
+        | :? Note as current when textBox.Text <> current.RowText ->
+          dispatch (SetRowText(current.Id, textBox.Text))
+        | _ -> ())
+
+      let row = StackPanel(Orientation = Orientation.Horizontal)
+      row.Children.Add checkBox
+      row.Children.Add textBox
+
+      // Rehydrate when the container is recycled for another item.
+      row.DataContextChanged.Add(fun _ ->
+        match row.DataContext with
+        | :? Note as current ->
+          checkBox.IsChecked <- current.Checked
+          textBox.Text <- current.RowText
+        | _ -> ())
+      row :> Control),
+    true)
+```
+
+Two interaction notes:
+
+- Sync explicitly in code instead of using `ReflectionBinding` when the app must trim or publish AOT: reflection bindings are annotated `RequiresUnreferencedCode`/`RequiresDynamicCode` and fail there. XAML keeps compiled bindings as the AOT-safe alternative.
+- A model update replaces the item, and the row content is rebuilt even with a recycling template, so uncommitted text in a control survives only until the next update of that row. Commit on focus loss (as above) keeps typing stable.
+
+The dashboard sample implements this shape in both languages: the template opts into recycling, the row syncs from `DataContextChanged`, and handlers read the live `DataContext`.
+
 > NXUI ships its own `BindItemsSource` extension that binds the raw `ItemsSource` property. In F#, open `MVUish.Avalonia.Collections` after `NXUI.Extensions` so shadowing picks this adapter, as shown above. In C#, call `CollectionExtensions` statically as shown above.
 
 ## Structural binding

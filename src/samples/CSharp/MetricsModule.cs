@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
+using Mvu = MVUish.Avalonia;
 using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
 using NXUI.HotReload.Nodes;
@@ -29,16 +30,14 @@ public static class MetricsModule
     switch (msg)
     {
       case Msg.Generate:
-        Func<Task<Msg>> generator = async () =>
-        {
-          await Task.Delay(1000); // Simulate work
-          var rnd = new Random();
-          return new Msg.NewMetrics(rnd.Next(10, 100), rnd.Next(200, 8000));
-        };
-
         return (model, Command.PerformTask(
-            (Func<object?, Task<Msg>>)(_ => generator()),
-            null,
+            async (object? _) =>
+              {
+                await Task.Delay(1000); // Simulate work
+                var rnd = new Random();
+                return new Msg.NewMetrics(rnd.Next(10, 100), rnd.Next(200, 8000));
+              },
+            default,
             res => res)
         );
 

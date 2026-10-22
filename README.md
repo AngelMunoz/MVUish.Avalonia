@@ -20,6 +20,12 @@ In a standard MVU loop, the `View` function is often called every time the `Mode
 - **High Performance:** Only the specific properties that change are updated.
 - **Native Control Interop:** Since the View returns actual Avalonia controls, you can easily use any 3rd party control, existing behaviors, or complex layouts without needing specialized wrappers.
 
+## Subscriptions and lifetimes
+
+Subscriptions follow the [Elmish v4 model](docs/subscriptions.md): a subscription set is a function of the model, re-evaluated after every update, and the runtime starts or stops sources to match. Sources are keyed, so child modules compose without collisions and settings can restart a source by embedding them in the id. Built-in bridges cover timers, .NET events, any `IObservable<'Msg>`, and Avalonia routed events.
+
+Programs own their resources. `Program.runWithLifecycle` returns the handle that stops subscriptions, completes the model stream, and stops the update loop; `Program.runWithLifetime` ties that release to a control leaving the visual tree; `Program.withTermination` makes a message do it. This fixes the 1.0 behavior where subscriptions and the update loop ran forever.
+
 ## Getting Started
 
 Requires **.NET 10** and **Avalonia 12**. The samples and templates also use [NXUI] 12 for code-built views.
@@ -143,6 +149,8 @@ var listBox = CollectionExtensions.BindItemsSource(
 
 A snapshot that repeats a key throws `ArgumentException`. Inside a `Program` view the throw surfaces through the program's `OnError` handler instead of crashing the app.
 
+> Containers are reused while they are realized. Once items scroll past the viewport, Avalonia's virtualizing panels recycle containers, so control-local row state cannot survive: a non-recycling template is rebuilt, and a recycling template is reused for another item. **A list that virtualizes and needs to keep row state must use a recycling template** (`supportsRecycling: true`) with the state on the model item; handlers must read the live `DataContext` rather than a captured item, and the row must rehydrate from it. A non-recycling template is only safe when the list cannot scroll. The sample shows the shape. See [Collections](docs/collections.md).
+
 > NXUI ships its own `BindItemsSource` extension that binds the raw `ItemsSource` property. In F#, open `MVUish.Avalonia.Collections` after `NXUI.Extensions` so shadowing picks this adapter, as shown above. In C#, call `CollectionExtensions` statically as shown above.
 
 ### Structural binding
@@ -168,7 +176,7 @@ dotnet new mvu-fsharp -o MyApp
 dotnet new mvu-csharp -o MyApp
 ```
 
-Each template generates a minimal clock app wired with this library and NXUI. Generated apps reference the published `MVUish.Avalonia` package (`1.*`); inside this repository the template projects build against the library source instead, through `templates/Directory.Build.props`.
+Each template generates a minimal clock app wired with this library and NXUI. Generated apps reference the published `MVUish.Avalonia` package (`2.*`); inside this repository the template projects build against the library source instead, through `templates/Directory.Build.props`.
 
 ## Existing Alternatives
 
@@ -182,3 +190,7 @@ If you prefer the VDOM approach or need strict Elm architecture compliance (wher
 [NXUI]: https://github.com/wieslawsoltes/NXUI
 [Fabulous.Avalonia]: https://github.com/fabulous-dev/Fabulous.Avalonia
 [Elmish.Avalonia]: https://github.com/JordanMarr/Elmish.Avalonia
+
+## Acknowledgements
+
+The keyed subscription engine and the ValueTask command fast paths are ported from [Elmish](https://github.com/elmish/elmish) (Apache License 2.0, Copyright elmish contributors).

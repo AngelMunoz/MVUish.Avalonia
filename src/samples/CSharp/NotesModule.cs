@@ -8,13 +8,14 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
+using Mvu = MVUish.Avalonia;
 using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
 using NotesBinding = MVUish.Avalonia.Collections.CollectionExtensions;
 
 public static class NotesModule
 {
-  public record Note(Guid Id, string Text)
+  public record Note(Guid Id, string Text, bool Checked, string RowText)
   {
     public override string ToString() => Text;
   }
@@ -26,11 +27,13 @@ public static class NotesModule
     public sealed record Add(string Text) : Msg;
     public sealed record Remove(Guid Id) : Msg;
     public sealed record Reverse : Msg;
+    public sealed record SetChecked(Guid Id, bool Checked) : Msg;
+    public sealed record SetRowText(Guid Id, string Text) : Msg;
   }
 
   public static (Model, Action<Action<Msg>, Action<string, Exception>>) Init()
   {
-    Note Seed(string text) => new(Guid.NewGuid(), text);
+    Note Seed(string text) => new(Guid.NewGuid(), text, false, "");
 
     return (
         new Model([Seed("First"), Seed("Second"), Seed("Third")]),
@@ -43,7 +46,7 @@ public static class NotesModule
     switch (msg)
     {
       case Msg.Add a when !string.IsNullOrWhiteSpace(a.Text):
-        var note = new Note(Guid.NewGuid(), a.Text.Trim());
+        var note = new Note(Guid.NewGuid(), a.Text.Trim(), false, "");
         return (new Model([note, .. model.Notes]), Command.None<Msg>());
 
       case Msg.Remove r:
@@ -52,6 +55,18 @@ public static class NotesModule
 
       case Msg.Reverse:
         return (new Model(model.Notes.Reverse().ToArray()), Command.None<Msg>());
+
+      case Msg.SetChecked c:
+        var checkedNotes = model.Notes
+            .Select(n => n.Id == c.Id ? n with { Checked = c.Checked } : n)
+            .ToArray();
+        return (new Model(checkedNotes), Command.None<Msg>());
+
+      case Msg.SetRowText t:
+        var textNotes = model.Notes
+            .Select(n => n.Id == t.Id ? n with { RowText = t.Text } : n)
+            .ToArray();
+        return (new Model(textNotes), Command.None<Msg>());
 
       default:
         return (model, Command.None<Msg>());
@@ -63,26 +78,80 @@ public static class NotesModule
     var notes = model.Select(m => m.Notes);
     var count = model.Select(m => $"{m.Notes.Count} notes");
 
-    // Each row owns state the model never sees (the checkbox and the text
-    // box). The keyed binding matches rows by Id and reuses containers, so
-    // that state travels with its note through adds, removes, and reorders.
+    // Rows are recyclable: the ListBox virtualizes, so Avalonia reuses a
+    // row's control tree for a different note while the list scrolls. The
+    // row keeps no state of its own; every control rehydrates from the note
+    // in its DataContext. Reflection bindings would do the same, but they
+    // need reflection, so this code-built view syncs explicitly and stays
+    // trimming/AOT friendly.
     var rowTemplate = new FuncDataTemplate<Note>(
         (note, _) =>
-            StackPanel()
-                .Orientation(Orientation.Horizontal)
-                .Spacing(8)
-                .Children(
-                    CheckBox(),
-                    TextBlock()
-                        .VerticalAlignment(VerticalAlignment.Center)
-                        .Text(new Binding("Text")),
-                    TextBox().Width(140).PlaceholderText("row state lives here"),
-                    Button()
-                        .Content("x")
-                        .OnClickHandler((_, _) => dispatch(new Msg.Remove(note.Id)))
-                )
-                .Mount(),
-        supportsRecycling: false
+        {
+            var checkBox = new CheckBox { IsChecked = note.Checked };
+            checkBox.IsCheckedChanged += (_, _) =>
+            {
+                if (checkBox.DataContext is Note current && (checkBox.IsChecked ?? false) != current.Checked)
+                    dispatch(new Msg.SetChecked(current.Id, checkBox.IsChecked ?? false));
+            };
+
+            var textBlock = new TextBlock
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Text = note.Text
+            };
+
+            var textBox = new TextBox
+            {
+                Width = 140,
+                PlaceholderText = "row state lives here",
+                Text = note.RowText
+            };
+
+            // Commit on focus loss. Dispatching per keystroke races the async
+            // model update: the row is refreshed with the previous model value
+            // and the new character is overwritten.
+            textBox.LostFocus += (_, _) =>
+            {
+                if (textBox.DataContext is Note current && textBox.Text != current.RowText)
+                    dispatch(new Msg.SetRowText(current.Id, textBox.Text));
+            };
+
+            var remove = new Button { Content = "x" };
+            remove.Click += (_, _) =>
+            {
+                if (remove.DataContext is Note note)
+                    dispatch(new Msg.Remove(note.Id));
+            };
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            row.Children.Add(checkBox);
+            row.Children.Add(textBlock);
+            row.Children.Add(textBox);
+            row.Children.Add(remove);
+
+            // Rehydrate the row when the container is recycled for another
+            // note. A new note instance for the same id (an update, e.g. a
+            // checkbox toggle) keeps the text box untouched, so text being
+            // typed is not overwritten by the committed model value.
+            var syncedId = note.Id;
+            row.DataContextChanged += (_, _) =>
+            {
+                if (row.DataContext is Note current)
+                {
+                    checkBox.IsChecked = current.Checked;
+                    textBlock.Text = current.Text;
+
+                    if (current.Id != syncedId)
+                    {
+                        textBox.Text = current.RowText;
+                        syncedId = current.Id;
+                    }
+                }
+            };
+
+            return row;
+        },
+        supportsRecycling: true
     );
 
     var list = ListBox()

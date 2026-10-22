@@ -7,6 +7,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Data;
 using System.Reactive.Linq;
+using Mvu = MVUish.Avalonia;
 using static MVUish.Avalonia.CSharp;
 using NXUI.Extensions;
 using NXUI.HotReload.Nodes;
@@ -85,15 +86,16 @@ public static class MainView
     }
 
     // SUBSCRIBE
-    Func<Action<Msg>, IDisposable> Subscribe(Model model)
-    {
-      return Subscription.Batch([
-          Subscription.Map<ClockModule.Msg, Msg>(
-                    m => new Msg.Clock(m),
-                    ClockModule.Subscribe(model.Clock)
-                )
-      ]);
-    }
+    CSub<Msg> Subscribe(Model model) =>
+        Subscription.Map<ClockModule.Msg, Msg>(
+            ClockModule.SubId,
+            m => new Msg.Clock(m),
+            Subscription.Interval<ClockModule.Msg>(
+                ClockModule.SubId,
+                ClockModule.SubInterval,
+                () => new ClockModule.Msg.Tick(DateTime.Now)
+            )
+        );
 
     // VIEW
     ElementBuilder<DockPanel> View(IObservable<Model> model, Action<Msg> dispatch)
