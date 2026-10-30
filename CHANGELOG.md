@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Documentation: a Testing guide (`docs/testing.md`).
+
 ## [2.0.0] - 2026-10-21
 
 ### Added

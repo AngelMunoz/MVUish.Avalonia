@@ -37,3 +37,5 @@ The samples and templates also use [NXUI](https://github.com/wieslawsoltes/NXUI)
 - [Getting Started](./getting-started.md): your first counter in C# and F#, and how to wire it into an NXUI bootstrap.
 - [The Reactive MVU Pattern](./reactive-mvu.md): the model-update-observable loop, commands, subscriptions, and module composition.
 - [Collections](./collections.md): keyed and structural `BindItemsSource` bindings for efficient lists.
+- [Subscriptions](./subscriptions.md): keyed subscriptions, ids, and the program lifetime.
+- [Testing](./testing.md): headless UI-thread tests for programs, commands, and subscriptions.
