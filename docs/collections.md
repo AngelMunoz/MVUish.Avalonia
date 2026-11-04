@@ -110,4 +110,4 @@ For short lists where none of the row state matters, `BindStream` on `ItemsContr
 
 ## Threading
 
-Both bindings apply changes on the thread that emits the snapshot. `Program` dispatches on the UI thread, so model streams need nothing extra. Sources that emit from background threads must hop first, for example with `Observable.observeOn` on `Avalonia.Threading.Dispatcher.UIThread`.
+Both bindings apply changes on the thread that emits the snapshot. A program emits on its bound dispatcher's thread (the UI thread by default), so model streams need nothing extra. Sources that emit from background threads must hop first, for example with `Observable.observeOn` on `Avalonia.Threading.Dispatcher.UIThread`.

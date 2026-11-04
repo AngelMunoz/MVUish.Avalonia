@@ -112,6 +112,21 @@ MVUish.Avalonia supports scaling your application through **Module Composition**
 
 Check the [Samples](./src/samples/) folder for a comprehensive **Dashboard** example showcasing parent-child communication, async commands, and subscriptions in both languages.
 
+## Threading
+
+Every program binds one dispatcher when it starts — `Dispatcher.UIThread`
+by default, or any `IDispatcher` via `Program.withDispatcher` — and the
+whole update loop (update, view propagation, subscription reconcile,
+command startup) runs on that rendering thread, one message at a time.
+`dispatch` itself is thread-safe from any thread.
+
+All async work a command starts also runs on the rendering thread:
+`Cmd.OfAsync` starts on it and `Cmd.OfTask` / `Cmd.OfValueTask` resume on
+it, so CPU-bound segments between suspensions execute there too. Background
+processing must be explicit — `Task.Run`, `backgroundTask`, or an async
+context round-trip; the [Reactive MVU guide](./docs/reactive-mvu.md#threading)
+shows the patterns.
+
 ## Collections
 
 Assigning a new list to `ItemsSource` on every model change rebuilds every item container: selection, scroll position, and any state a row holds are lost. The collection bindings instead keep one owned `ObservableCollection` as `ItemsSource` and apply each snapshot from the model as minimal deltas, so containers are reused.

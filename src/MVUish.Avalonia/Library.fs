@@ -52,6 +52,13 @@ type Program<'Arg, 'Model, 'Msg, 'View> = {
   /// subscriptions stop, the model stream completes, and the handler runs
   /// with the final model.
   Termination: ('Msg -> bool) * ('Model -> unit)
+  /// The dispatcher the update loop posts to, as an IDispatcher. None
+  /// captures Dispatcher.UIThread once when the program starts, so the
+  /// loop keeps one dispatcher for its lifetime even when the process
+  /// global is later replaced; Some binds one explicitly — a headless
+  /// test session's dispatcher, or any test fake implementing
+  /// IDispatcher.
+  Dispatcher: IDispatcher option
 }
 
 // -----------------------------------------------------------
@@ -649,6 +656,7 @@ module Program =
     Subscribe = fun _ -> Sub.none
     OnError = fun (msg, ex) -> printfn "MVUish.Avalonia Error: %s\n%O" msg ex
     Termination = (fun _ -> false), ignore
+    Dispatcher = None
   }
 
   let mkSimple
@@ -700,6 +708,19 @@ module Program =
     program with
         Termination = map program.Termination
   }
+
+  /// Bind the update loop to one IDispatcher. The default captures
+  /// Dispatcher.UIThread once when the program starts; withDispatcher
+  /// binds one explicitly instead. A headless test harness binds its
+  /// programs to the session's dispatcher so a reset or replaced global
+  /// UIThread can never strand the loop on a ghost dispatcher, and a
+  /// logic-only test binds a fake that runs posts inline, with no UI
+  /// thread at all.
+  let withDispatcher
+    (dispatcher: IDispatcher)
+    (program: Program<'Arg, 'Model, 'Msg, 'View>)
+    =
+    { program with Dispatcher = Some dispatcher }
 
   /// Trace every update: message, resulting model, and the ids of the
   /// subscriptions the new model wants active.
@@ -763,6 +784,35 @@ module Program =
     let initModel, initCmd = program.Init arg
     let state = new BehaviorSubject<'Model>(initModel)
     let toTerminate, terminate = program.Termination
+
+    // Bound once here: the loop keeps this dispatcher for the program's
+    // whole lifetime, so a later swap of the process-global
+    // Dispatcher.UIThread (headless isolation resets, a second session)
+    // can neither strand nor hijack the program.
+    let ui: IDispatcher =
+      match program.Dispatcher with
+      | Some dispatcher -> dispatcher
+      | None -> Dispatcher.UIThread
+
+    // A program that captured the process global warns once if the
+    // global later moves: posts from code still reading
+    // Dispatcher.UIThread then miss this program's dispatcher (headless
+    // isolation resets, a second session). An injected dispatcher
+    // intentionally differs from the global and never reports.
+    let mutable warnedDrift = false
+
+    let checkDrift() =
+      if
+        not warnedDrift
+        && program.Dispatcher.IsNone
+        && not(obj.ReferenceEquals(ui, Dispatcher.UIThread))
+      then
+        warnedDrift <- true
+
+        program.OnError(
+          "Dispatcher drift: the process global changed after the program started",
+          exn "Posts that read Dispatcher.UIThread now miss this program's dispatcher"
+        )
     let mutable activeSubs: (SubId * IDisposable) list = []
     let mutable stopped = false
     let mutable enqueue = ignore
@@ -827,8 +877,27 @@ module Program =
             teardown false
             return ()
           | Some msg ->
-            let op = Dispatcher.UIThread.InvokeAsync(fun () -> processMsg msg)
-            do! op.GetTask() |> Async.AwaitTask
+            checkDrift()
+
+            // IDispatcher offers Post only. The completion continuation
+            // runs on the bound dispatcher's thread after processMsg
+            // returns, preserving the one-message-at-a-time order the
+            // awaited InvokeAsync had. processMsg reports its own errors
+            // to OnError; the guard keeps the loop's fate identical to
+            // the awaited-operation behavior.
+            do!
+              Async.FromContinuations(fun (ok, err, _canceled) ->
+                ui.Post(
+                  (fun () ->
+                    try
+                      processMsg msg
+                      ok()
+                    with ex ->
+                      err ex
+                  ),
+                  DispatcherPriority.Default
+                )
+              )
 
             if stopped then return () else return! loop()
         }
@@ -1230,6 +1299,8 @@ module CSharp =
     let mutable _onError: Action<string, exn> =
       Action<_, _>(fun msg ex -> printfn "MVUish.Avalonia Error: %s\n%O" msg ex)
 
+    let mutable _dispatcher: IDispatcher option = None
+
     let build () =
       let fsInit a =
         let struct (m, c) = init.Invoke(a)
@@ -1278,9 +1349,14 @@ module CSharp =
             customTraced
         | None -> customTraced
 
+      let dispatched =
+        match _dispatcher with
+        | Some dispatcher -> FsProgram.withDispatcher dispatcher terminated
+        | None -> terminated
+
       FsProgram.withErrorHandler
         (fun (msg, ex) -> _onError.Invoke(msg, ex))
-        terminated
+        dispatched
 
     member this.WithSubscription(subscribe: Func<'Model, CSub<'Msg>>) =
       _subscribe <- subscribe
@@ -1302,6 +1378,14 @@ module CSharp =
 
     member this.WithErrorHandler(handler: Action<string, exn>) =
       _onError <- handler
+      this
+
+    /// <summary>
+    /// Bind the update loop to the given <c>IDispatcher</c> instead of
+    /// capturing <c>Dispatcher.UIThread</c> when the program starts.
+    /// </summary>
+    member this.WithDispatcher(dispatcher: IDispatcher) =
+      _dispatcher <- Some dispatcher
       this
 
     member _.RunWith(arg: 'Arg) : 'View = FsProgram.runWith arg (build())

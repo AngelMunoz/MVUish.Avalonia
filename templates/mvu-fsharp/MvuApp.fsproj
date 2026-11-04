@@ -16,6 +16,6 @@
     <PackageReference Include="NXUI.Desktop" Version="12.0.0" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="MVUish.Avalonia" Version="2.*" />
+    <PackageReference Include="MVUish.Avalonia" Version="3.*" />
   </ItemGroup>
 </Project>

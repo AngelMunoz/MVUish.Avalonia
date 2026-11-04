@@ -26,6 +26,7 @@ There is no tree diffing and no wrapper controls: the view returns real Avalonia
 | `Program.withSubscription` | `.WithSubscription(...)` | Register the keyed subscription set; re-evaluated per update |
 | `Program.mapSubscription` | — | Accumulate instead of replace subscriptions |
 | `Program.withTermination` | `.WithTermination(...)` | Exit message plus final-model handler |
+| `Program.withDispatcher` | `.WithDispatcher(...)` | Bind the update loop to one `IDispatcher` (default: `Dispatcher.UIThread` captured at start) |
 | `Program.withTrace` | `.WithTrace(...)` | Trace message, model, and wanted sub ids |
 | `Program.withConsoleTrace` | `.WithConsoleTrace()` | Log messages, models, and active sub ids |
 | `Program.withErrorHandler` | `.WithErrorHandler(...)` | Handle command and update errors |
@@ -33,7 +34,7 @@ There is no tree diffing and no wrapper controls: the view returns real Avalonia
 | `Program.runWithLifecycle` | `.RunWithLifecycle(arg)` | View plus an `IDisposable` that stops the program |
 | `Program.runWithLifetime` | `.RunWithLifetime(control, arg)` | Program tied to a control's visual-tree lifetime |
 
-Update and dispatch are marshalled to the UI thread, and `dispatch` is thread-safe from any thread.
+Update and dispatch are marshalled to the UI thread, and `dispatch` is thread-safe from any thread. Each program binds one dispatcher when it starts — `Dispatcher.UIThread` by default — and keeps it for its lifetime, so a replaced process global can no longer strand a running program; `Program.withDispatcher` (C# `.WithDispatcher(...)`) binds any `IDispatcher` explicitly — a headless harness binds its session's dispatcher, and a logic-only test binds an inline fake with no UI thread at all.
 
 ## Commands
 
@@ -57,6 +58,52 @@ Common helpers:
 | `Cmd.OfTask.perform` | `Command.PerformTask(...)` | Run a `Task` workload, dispatch the result |
 | `Cmd.OfTask.either` | `Command.EitherTask(...)` | Run a `Task`, map success or error to messages |
 | `Cmd.OfValueTask.*` | `Command.*ValueTask(...)` | Native ValueTask commands |
+
+### Threading
+
+All async work a command starts runs on the rendering thread — the
+program's bound dispatcher's thread, which is `Dispatcher.UIThread` unless
+`Program.withDispatcher` bound another. `Cmd.OfAsync` starts with
+`Async.StartImmediate`, and `Cmd.OfTask` / `Cmd.OfValueTask` await inside
+a `task` that captures the UI `SynchronizationContext`, so every segment
+between suspensions — including CPU-bound work — executes there, one
+message at a time, and the resulting message comes back through the same
+loop. I/O that truly suspends is the only part that overlaps.
+
+Background processing must be explicit:
+
+```fsharp
+// hand the work to the pool and await it on the rendering thread
+let! thing = Task.Run(fun () -> thing())
+
+// F# task builder whose continuations stay on the pool
+let! thing = backgroundTask { thing() }
+
+// full control of the context round-trip
+let thing = async {
+  let context = SynchronizationContext.Current
+  do! Async.SwitchToThreadPool()
+  let! result = doTheThing()
+
+  if not (isNull context) then
+    do! Async.SwitchToContext context
+
+  return result
+}
+```
+
+Avalonia installs its own `SynchronizationContext` on the UI thread, so the
+round-trip lands back on the rendering thread; note that
+`Async.StartImmediate` and task awaits already restore the context on
+their own — the manual pattern is for work that started on the pool, for
+example under `Cmd.OfAsyncWith Async.Start`.
+
+The loop reports once through `OnError` when a program that captured
+`Dispatcher.UIThread` finds the global replaced (dispatcher drift — headless
+isolation resets, a second session): posts from code still reading the
+global then miss that program's dispatcher. Programs bound with
+`withDispatcher` never report, because differing from the global is their
+point.
 
 ## Subscriptions
 

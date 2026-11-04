@@ -7,16 +7,80 @@ category: Documentation
 
 # Testing MVU applications
 
-MVUish programs are async by construction: `update` runs on a UI-thread loop,
-dispatch is marshalled with `InvokeAsync`, and subscriptions tick on timers.
-Tests that block the UI thread (`Task.Result`, `.Wait()`, `Thread.Sleep`)
-deadlock the very loop they want to observe. The library's own test suite
-(`tests/MVUish.Avalonia.Tests`) contains a harness that works; this page
-explains its pieces so you can reuse them in your application.
+MVUish programs are async by construction: `update` runs on the rendering
+thread, one message at a time, and effects complete whenever they complete.
+Never block that thread (`Task.Result`, `.Wait()`, `Thread.Sleep`) — you
+would deadlock the loop you are trying to observe. This page covers the
+threading rule, the two kinds of tests it implies, and the harness pieces
+the library's own suite uses.
 
-## The headless session
+## The threading rule
 
-One `Avalonia.Headless` session serves the whole test assembly:
+All async work a command starts runs on the rendering thread — the
+program's bound dispatcher's thread, `Dispatcher.UIThread` unless bound to
+something else. `Cmd.OfAsync` starts on it, `Cmd.OfTask` /
+`Cmd.OfValueTask` resume on it, so CPU-bound segments between suspensions
+run there too. Real background work must be explicit (`Task.Run`,
+`backgroundTask`, or a context round-trip — see
+[Threading](reactive-mvu.html#threading)); tests feel the rule immediately,
+because everything the program does serializes on one thread.
+
+## Two kinds of tests
+
+| | Logic-only | Control tests |
+| --- | --- | --- |
+| Dispatcher | a fake `IDispatcher` | the headless session's |
+| Session | none | one per process |
+| Parallelizable | yes, with anything | no — sequenced |
+| Asserts | models, commands, subscriptions | rendered text, clicks, layout |
+
+## Logic-only tests (no UI thread)
+
+Bind a fake that runs every post inline. No session, no shared thread,
+nothing global — these tests can run in parallel with anything:
+
+```fsharp
+let fake =
+  { new IDispatcher with
+      member _.CheckAccess() = true
+      member _.VerifyAccess() = ()
+      member _.Post(action: Action, _priority: DispatcherPriority) =
+        action()
+  }
+
+let mutable dispatch = Unchecked.defaultof<Dispatch<unit>>
+let mutable last = 0
+
+let view (model: IObservable<int>) (d: Dispatch<unit>) =
+  dispatch <- d
+  model.Subscribe(fun m -> last <- m) |> ignore
+
+let program =
+  Program.mkSimple (fun () -> 0) (fun _ n -> n + 1) view
+  |> Program.withDispatcher fake
+
+let _, lifetime = Program.runWithLifecycle () program
+
+dispatch()
+dispatch()
+// poll until last = 2, then dispose the lifetime
+```
+
+When ordering across threads matters, give the fake its own thread and a
+queue instead — the suite's `PumpingDispatcher` is the pattern, and it is
+also how two programs run on two dispatchers in one process.
+
+Code that calls `InvokeAsync` or `Dispatcher.UIThread` directly bypasses
+the binding. Under a fake, with no session pumping the global, such a call
+queues on a dispatcher nothing drains: the await never completes and the
+test fails at its timeout — a loud detector for the coupling. Keep direct
+dispatch on a captured, pumped dispatcher, or route it through the bound
+`IDispatcher` (which offers `Post`, not `InvokeAsync`).
+
+## Control tests (the headless session)
+
+One `Avalonia.Headless` session serves the whole test assembly, and every
+program the harness starts is bound to that session's dispatcher:
 
 ```fsharp
 module MyTests.TestSession
@@ -33,22 +97,37 @@ let Session = HeadlessUnitTestSession.StartNew(typeof<TestApp>)
 do ()
 ```
 
-Two invariants:
+```fsharp
+let ui: Dispatcher =
+  Session.Dispatch(
+    Func<Dispatcher>(fun () -> Dispatcher.UIThread),
+    CancellationToken.None)
+    .GetAwaiter().GetResult()
 
-- **One session per process.** `Dispatcher.UIThread` is process-global; a
-  second session posts the program loop's `InvokeAsync` work to the wrong
-  dispatcher.
-- **Parallelization stays off.** All tests share the one UI thread; concurrent
-  tests would interleave programs on it. xUnit's
-  `DisableTestParallelization` is set at the assembly level.
+// inside each test:
+let program =
+  Program.mkProgram init update view
+  |> Program.withDispatcher ui
+```
 
-## Running a test body on the UI thread
+Binding keeps each program on the session's dispatcher even when headless
+isolation resets the global — a program can no longer end up stranded on a
+ghost dispatcher.
 
-Tests are `Task`-returning facts. The body is dispatched onto the headless UI
-thread and must **await its work — never block**: the dispatcher only
-processes the program loop's UI posts while the awaited task yields. A
-`.Result` or `.Wait()` pins the thread and deadlocks the test. A
-cancellation cap turns a stuck test into a failure instead of a hang:
+Why these tests stay sequenced, even with binding:
+
+- they all share the one rendering thread, so parallel tests interleave
+  programs on it and timing waits miss;
+- focus, input, and the clipboard are process-global in Avalonia, and so is
+  the managed heap a memory-budget test measures;
+- the session's own dispatch loop pumps the global dispatcher.
+
+`DisableTestParallelization` exists for these suites; logic-only tests
+bound to their own fake carry no such constraint.
+
+## The harness
+
+Run the body on the UI thread with a cap that fails instead of hanging:
 
 ```fsharp
 let private testTimeout = TimeSpan.FromSeconds 8.0
@@ -59,21 +138,10 @@ let private onUi (work: unit -> Task<bool>) : Task<bool> = task {
 }
 ```
 
-```fsharp
-[<Fact>]
-let myFeatureWorks () : Task = task {
-  let! ok = onUi(fun () -> task {
-    // build the program, run it, assert, dispose
-    return true
-  })
-  Assert.True ok
-}
-```
-
-## Waiting for async outcomes
-
-Dispatch, ticks, and command effects land asynchronously. Poll instead of
-sleeping once:
+Poll, never sleep — dispatch, ticks, and command effects land
+asynchronously, and timer-based subscriptions use real time, so assert
+"the condition holds within the timeout", never exact counts after a fixed
+delay:
 
 ```fsharp
 let private waitFor (timeoutMs: int) (cond: unit -> bool) : Task<bool> = task {
@@ -86,42 +154,33 @@ let private waitFor (timeoutMs: int) (cond: unit -> bool) : Task<bool> = task {
 }
 ```
 
-Timer-based behavior (`Sub.interval`, a ticking subscription) uses real time:
-keep intervals small and assert "the condition holds within the timeout",
-never exact counts after a fixed sleep.
-
-## Driving a program by hand
-
-A recording view captures the model stream and the dispatch function, so a
-test can drive messages by hand and assert outcomes:
+Record the model stream and the dispatch function to drive a program by
+hand:
 
 ```fsharp
 type Harness<'Model, 'Msg>() =
-  let last = ref Unchecked.defaultof<'Model>
+  let mutable last = Unchecked.defaultof<'Model>
   let mutable dispatch = Unchecked.defaultof<Dispatch<'Msg>>
-  let completed = ref false
+  let mutable completed = false
 
   member _.View =
     fun (model: IObservable<'Model>) (d: Dispatch<'Msg>) ->
       dispatch <- d
       model.Subscribe(
-        (fun m -> last.Value <- m),
+        (fun m -> last <- m),
         (fun _ -> ()),
-        (fun () -> completed.Value <- true))
+        (fun () -> completed <- true))
       |> ignore
       Border()
 
   member _.Dispatch msg = dispatch msg
-  member _.Model = last.Value
-  member _.Completed = completed.Value
+  member _.Model = last
+  member _.Completed = completed
 ```
 
-Combine it with `Program.runWithLifecycle` inside `onUi`, dispatch messages,
-`waitFor` the model to settle, then dispose the handle and assert the
-completion flag. The suite's `ProgramTests.fs` shows this end to end —
-`modelStreamCompletesOnDispose`, `boundControlsRevertToDefaultsOnCompletion`,
-`subscriptionsFollowTheModel` — and `countingTicker` shows a recording
-subscription whose `Dispose` is counted so teardown can be asserted.
+Never dispatch from inside a dispatch: a `session.Dispatch` made from the
+UI thread queues work the blocked thread can never serve, and the test
+freezes. The suite's `ProgramTests.fs` shows the pieces end to end.
 
 ## What to assert
 
@@ -129,20 +188,20 @@ Behavior, not internals:
 
 - **user-visible outcomes**: bound `TextBlock` text, delivered messages,
   timers that stopped;
-- **lifecycle**: disposing the handle freezes bound views, completes the model
-  stream (bound properties revert to defaults), dispatch after dispose is
-  dropped, and dispose is idempotent;
-- **subscriptions**: a source starts when the model wants it and stops when it
-  does not; changing an id dependency restarts it; child sets compose under
-  scoped ids;
-- **commands**: what they dispatch and report — run the returned `Cmd` against
-  recording `dispatch`/`onError` functions, or drive a real program and
-  assert the messages it delivers;
+- **lifecycle**: disposing the handle freezes bound views, completes the
+  model stream (bound properties revert to defaults), dispatch after
+  dispose is dropped, dispose is idempotent;
+- **subscriptions**: a source starts when the model wants it, stops when it
+  does not, restarts when its id dependency changes; child sets compose
+  under scoped ids;
+- **commands**: what they dispatch and what they report — drive the
+  program and assert the messages, or run the returned `Cmd` against
+  recording `dispatch`/`onError` functions;
 - **error paths**: a failing command reports to the program's error handler
   instead of throwing.
 
 ## C#
 
-The same harness translates directly to C# xUnit `async Task` facts: start
-one `HeadlessUnitTestSession`, `await session.Dispatch(work, token)` to run on
-the UI thread, poll conditions with small delays, and never block the thread.
+The same harness translates to C# xUnit `async Task` facts: one session,
+`await session.Dispatch(work, token)` to run on the UI thread, small delays
+in polls, and never a blocking wait.

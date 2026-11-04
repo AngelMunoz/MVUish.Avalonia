@@ -16,6 +16,7 @@ open Avalonia
 open Avalonia.Controls
 open Avalonia.Input
 open Avalonia.Layout
+open Avalonia.Threading
 open MVUish.Avalonia
 open MVUish.Avalonia.Tests.TestSession
 open Xunit
@@ -107,18 +108,18 @@ let private parseText (tb: TextBlock) =
 /// Records the last model, stream completion, and the dispatch function,
 /// for tests that drive messages by hand.
 type Harness<'Model, 'Msg>() =
-  let last = ref Unchecked.defaultof<'Model>
+  let mutable last = Unchecked.defaultof<'Model>
   let mutable dispatch = Unchecked.defaultof<Dispatch<'Msg>>
-  let completed = ref false
+  let mutable completed = false
 
   member _.View =
     fun (model: IObservable<'Model>) (d: Dispatch<'Msg>) ->
       dispatch <- d
 
       model.Subscribe(
-        (fun m -> last.Value <- m),
+        (fun m -> last <- m),
         (fun _ -> ()),
-        (fun () -> completed.Value <- true)
+        (fun () -> completed <- true)
       )
       |> ignore
 
@@ -126,9 +127,9 @@ type Harness<'Model, 'Msg>() =
 
   member _.Dispatch msg = dispatch msg
 
-  member _.Model = last.Value
+  member _.Model = last
 
-  member _.Completed = completed.Value
+  member _.Completed = completed
 
 /// A view that records through the harness and returns the given control.
 let private keeping
@@ -321,6 +322,247 @@ let terminationMessageStopsProgramWithFinalModel () : Task = task {
     })
 
   Assert.True result
+}
+
+// ---------------------------------------------------------------
+// Use case: programs bind to one dispatcher for their lifetime.
+// ---------------------------------------------------------------
+
+/// A dispatcher double for tests: one dedicated background thread drains
+/// a queue, so posts from any thread run there, one at a time, in order.
+/// A real dispatcher's threading without its process-global couplings —
+/// Avalonia 12's public DispatcherFrame and MainLoop are welded to
+/// Dispatcher.UIThread, so a second real dispatcher cannot be pumped at
+/// all, while an IDispatcher double can.
+type private PumpingDispatcher() =
+  let mutable threadId = 0
+  let ready = new ManualResetEventSlim(false)
+  let queue = new BlockingCollection<Action>()
+  let mutable processed = 0
+  let mutable fault: exn option = None
+
+  let thread =
+    Thread(fun () ->
+      threadId <- Environment.CurrentManagedThreadId
+      ready.Set()
+
+      try
+        while true do
+          queue.Take().Invoke()
+          processed <- processed + 1
+      with ex ->
+        if not queue.IsAddingCompleted then
+          fault <- Some ex
+    )
+
+  do
+    thread.IsBackground <- true
+    thread.Start()
+    Assert.True(ready.Wait(5000))
+
+  member _.ThreadId = threadId
+  member _.Processed = processed
+  member _.Fault = fault
+
+  interface IDisposable with
+    member _.Dispose() =
+      queue.CompleteAdding()
+      Assert.True(thread.Join(5000))
+      Assert.True(fault.IsNone, sprintf "pump faulted: %A" fault)
+
+  interface IDispatcher with
+    member _.CheckAccess() =
+      Environment.CurrentManagedThreadId = threadId
+
+    member _.VerifyAccess() =
+      if Environment.CurrentManagedThreadId <> threadId then
+        failwith "a pumping dispatcher was touched from the wrong thread"
+
+    member _.Post(action: Action, _priority: DispatcherPriority) =
+      queue.Add(action)
+
+[<Fact>]
+let boundDispatcherRunsTheUpdateLoopThere () : Task = task {
+  use other = new PumpingDispatcher()
+  let mutable sessionThread = 0
+  let mutable ranOn = 0
+
+  // The process global still points at the session's dispatcher: a loop
+  // that read it per message would process updates on the session
+  // thread instead of on the bound dispatcher.
+  let! result =
+    onUi(fun () -> task {
+      sessionThread <- Environment.CurrentManagedThreadId
+      let h = Harness<int, unit>()
+
+      let view (model: IObservable<int>) (dispatch: Dispatch<unit>) =
+        model.Subscribe(fun _ ->
+          ranOn <- Environment.CurrentManagedThreadId
+        )
+        |> ignore
+
+        h.View model dispatch
+
+      let program =
+        Program.mkSimple (fun () -> 0) (fun _ n -> n + 1) view
+        |> Program.withDispatcher(other :> IDispatcher)
+
+      let _, lifetime = Program.runWithLifecycle () program
+
+      h.Dispatch()
+      h.Dispatch()
+      let! gotTwo = waitFor 2000 (fun () -> h.Model = 2)
+
+      lifetime.Dispose()
+
+      return
+        gotTwo
+        && h.Completed
+        && ranOn = other.ThreadId
+        && ranOn <> sessionThread
+    })
+
+  Assert.True result
+}
+
+// A fake dispatcher runs every post inline on the posting thread. A
+// logic-only program needs no headless session and no UI thread, so its
+// tests can run in parallel with anything.
+[<Fact>]
+let fakeDispatcherRunsAProgramWithoutAnyUIThread () : Task = task {
+  let fake =
+    { new IDispatcher with
+        member _.CheckAccess() = true
+        member _.VerifyAccess() = ()
+        member _.Post(action: Action, _priority: DispatcherPriority) =
+          action.Invoke()
+    }
+
+  let mutable dispatch = Unchecked.defaultof<Dispatch<unit>>
+  let mutable last = 0
+  let mutable completed = false
+
+  let view (model: IObservable<int>) (d: Dispatch<unit>) =
+    dispatch <- d
+
+    model.Subscribe(
+      (fun m -> last <- m),
+      ignore,
+      (fun () -> completed <- true)
+    )
+    |> ignore
+
+  let program =
+    Program.mkSimple (fun () -> 0) (fun _ n -> n + 1) view
+    |> Program.withDispatcher fake
+
+  let _, lifetime = Program.runWithLifecycle () program
+
+  dispatch()
+  dispatch()
+  let! gotTwo = waitFor 2000 (fun () -> last = 2)
+
+  lifetime.Dispose()
+
+  Assert.True(gotTwo && completed)
+}
+
+// An injected dispatcher intentionally differs from the process global
+// (the session's); that difference must not be reported as drift.
+[<Fact>]
+let injectedDispatcherIsNotReportedAsDrift () : Task = task {
+  use other = new PumpingDispatcher()
+  let mutable reported = 0
+  let mutable last = 0
+  let mutable dispatch = Unchecked.defaultof<Dispatch<unit>>
+
+  let view (model: IObservable<int>) (d: Dispatch<unit>) =
+    dispatch <- d
+    model.Subscribe(fun m -> last <- m) |> ignore
+
+  let program =
+    Program.mkSimple (fun () -> 0) (fun _ n -> n + 1) view
+    |> Program.withErrorHandler(fun (_: string, _: exn) ->
+      reported <- reported + 1
+    )
+    |> Program.withDispatcher(other :> IDispatcher)
+
+  let _, lifetime = Program.runWithLifecycle () program
+
+  dispatch()
+  let! gotOne = waitFor 2000 (fun () -> last = 1)
+
+  lifetime.Dispose()
+
+  Assert.True(gotOne && reported = 0)
+}
+
+// Two programs, two bound dispatchers: both loops run at the same
+// time, each on its own thread, in one process.
+[<Fact>]
+let twoProgramsRunIndependentlyOnTwoBoundDispatchers () : Task = task {
+  use dispatcherA = new PumpingDispatcher()
+  use dispatcherB = new PumpingDispatcher()
+
+  let startCounting (dispatcher: IDispatcher) =
+    let mutable dispatch = Unchecked.defaultof<Dispatch<unit>>
+    let mutable last = 0
+    let mutable ranOn = 0
+
+    let view (model: IObservable<int>) (d: Dispatch<unit>) =
+      dispatch <- d
+
+      model.Subscribe(fun m ->
+        last <- m
+        ranOn <- Environment.CurrentManagedThreadId
+      )
+      |> ignore
+
+    let program =
+      Program.mkSimple (fun () -> 0) (fun _ n -> n + 1) view
+      |> Program.withDispatcher dispatcher
+
+    let _, lifetime = Program.runWithLifecycle () program
+
+    (fun () -> dispatch()), (fun () -> last), (fun () -> ranOn), lifetime
+
+  let sendA, modelA, ranOnA, lifetimeA = startCounting dispatcherA
+  let sendB, modelB, ranOnB, lifetimeB = startCounting dispatcherB
+
+  for _ in 1 .. 25 do
+    sendA()
+    sendB()
+
+  let! bothGrew =
+    waitFor 3000 (fun () -> modelA() >= 25 && modelB() >= 25)
+
+  lifetimeA.Dispose()
+  lifetimeB.Dispose()
+
+  Assert.True(
+    bothGrew,
+    sprintf
+      "grew: A=%d B=%d, processed: A=%d B=%d"
+      (modelA())
+      (modelB())
+      dispatcherA.Processed
+      dispatcherB.Processed
+  )
+
+  Assert.True(
+    ranOnA() = dispatcherA.ThreadId,
+    sprintf "A ran on %d, bound to %d" (ranOnA()) dispatcherA.ThreadId
+  )
+
+  Assert.True(
+    ranOnB() = dispatcherB.ThreadId,
+    sprintf "B ran on %d, bound to %d" (ranOnB()) dispatcherB.ThreadId
+  )
+
+  Assert.True(
+    dispatcherA.ThreadId <> dispatcherB.ThreadId,
+    sprintf "threads collided at %d" dispatcherA.ThreadId
+  )
 }
 
 // ---------------------------------------------------------------

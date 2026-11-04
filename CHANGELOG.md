@@ -2,9 +2,16 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-11-04
+
 ### Added
 
-- Documentation: a Testing guide (`docs/testing.md`).
+- Dispatcher binding: the update loop binds one `IDispatcher` when the program starts — `Dispatcher.UIThread` by default — instead of reading the process global on every message, so a replaced global (headless isolation resets, a second session) can no longer strand or hijack a running program. `Program.withDispatcher` and the C# builder's `WithDispatcher` bind any `IDispatcher` explicitly: a headless harness binds its session's dispatcher, and logic-only tests bind an inline fake that needs no UI thread at all. A program that captured the global also reports a one-time `OnError` when the global later changes (dispatcher drift); injected dispatchers never report.
+- Documentation: the threading rule — all async work a command starts runs on the rendering thread, and background processing must be explicit (`Task.Run`, `backgroundTask`, or an async context round-trip) — stated in the README and the Reactive MVU guide's Commands/Threading sections; the Testing guide was rewritten around the two test kinds (logic-only on a fake `IDispatcher`, control tests on the headless session) and when parallelization must stay off.
+
+### Changed
+
+- **Breaking:** the `Program` record gained a `Dispatcher` field; records constructed by hand must add it (or use `mkProgram`/`mkSimple`).
 
 ## [2.0.0] - 2026-10-21
 

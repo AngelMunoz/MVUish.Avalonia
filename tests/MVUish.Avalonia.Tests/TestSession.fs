@@ -1,9 +1,11 @@
 module MVUish.Avalonia.Tests.TestSession
 
 // One headless session serves the WHOLE assembly: Dispatcher.UIThread is
-// process-global, so two sessions make program-loop InvokeAsync posts land
-// on the wrong dispatcher. Test parallelization is disabled to keep
-// programs from interleaving on the shared UI thread.
+// process-global, so two sessions make program-loop posts land on the
+// wrong dispatcher. Parallelization stays off for these session tests:
+// they share the one rendering thread plus process-global focus, input,
+// and clipboard. Logic-only tests bound to a fake IDispatcher share
+// nothing and need no such guard.
 
 open System
 open Avalonia
