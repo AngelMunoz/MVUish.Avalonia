@@ -198,12 +198,12 @@ Each template generates a minimal clock app wired with this library and NXUI. Ge
 If you prefer the VDOM approach or need strict Elm architecture compliance (where View is a pure function of Model -> UI Tree):
 
 - [Avalonia.FuncUI] - A VDOM-based MVU library, very similar to Elm/React.
-- [Fabulous.Avalonia] - MVU framework for .NET MAUI and Avalonia using VDOM.
+- [Fabulous] - MVU framework for .NET MAUI and Avalonia using VDOM.
 - [Elmish.Avalonia] - Elmish for Avalonia with static XAML views.
 
 [Avalonia.FuncUI]: https://github.com/fsprojects/Avalonia.FuncUI
 [NXUI]: https://github.com/wieslawsoltes/NXUI
-[Fabulous.Avalonia]: https://github.com/fabulous-dev/Fabulous.Avalonia
+[Fabulous]: https://github.com/fabulous-dev/Fabulous
 [Elmish.Avalonia]: https://github.com/JordanMarr/Elmish.Avalonia
 
 ## Acknowledgements
